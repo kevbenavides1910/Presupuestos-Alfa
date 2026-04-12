@@ -1,0 +1,12 @@
+.env.local
+.env
+.env.production
+node_modules/
+.next/
+out/
+dist/
+*.log
+.DS_Store
+tsconfig.tsbuildinfo
+prisma/*.db
+prisma/dev.db

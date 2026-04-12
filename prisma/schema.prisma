@@ -1,0 +1,485 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  SUPERVISOR
+  COMPRAS
+  COMMERCIAL
+  CONSULTA
+}
+
+enum CompanyName {
+  CONSORCIO
+  MONITOREO
+  TANGO
+  ALFA
+  ALFATRONIC
+  BENLO
+  BENA
+  JOBEN
+  GRUPO
+  ACE
+}
+
+enum ClientType {
+  PUBLIC
+  PRIVATE
+}
+
+enum ContractStatus {
+  ACTIVE
+  PROLONGATION
+  SUSPENDED
+  FINISHED
+  CANCELLED
+}
+
+enum ExpenseCategory {
+  UNIFORMS
+  AUDIT_FINDINGS
+  DEFERRED
+  ADMIN
+  TRANSPORT
+  FUEL
+  PHONES
+  OTHER
+}
+
+enum ExpenseType {
+  APERTURA
+  UNIFORMS
+  AUDIT
+  ADMIN
+  TRANSPORT
+  FUEL
+  PHONES
+  PLANILLA
+  OTHER
+}
+
+/// Partida presupuestaria del gasto (distribución del contrato)
+enum ExpenseBudgetLine {
+  LABOR       // Mano de obra
+  SUPPLIES    // Insumos
+  ADMIN       // Gasto administrativo
+  PROFIT      // Utilidad
+}
+
+// ─── Auth (NextAuth) ──────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  passwordHash  String?
+  role          UserRole  @default(CONSULTA)
+  company       CompanyName?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts  Account[]
+  sessions  Session[]
+  auditLogs AuditLog[]
+  expenses  Expense[] @relation("ExpenseCreatedBy")
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─── Contracts ────────────────────────────────────────────────────────────────
+
+model Contract {
+  id                String         @id @default(cuid())
+  licitacionNo      String         @unique
+  company           CompanyName
+  client            String
+  clientType        ClientType     @default(PUBLIC)
+  officersCount     Int            @default(0)
+  positionsCount    Int            @default(0)
+  startDate         DateTime
+  endDate           DateTime
+  monthlyBilling    Decimal        @db.Decimal(15, 2)
+  suppliesBudgetPct Decimal        @db.Decimal(6, 4)
+  equivalencePct    Decimal        @default(0) @db.Decimal(10, 8)
+  // Budget distribution (% of monthlyBilling, should sum to ~1.0)
+  laborPct          Decimal        @default(0) @db.Decimal(6, 4)
+  suppliesPct       Decimal        @default(0) @db.Decimal(6, 4)
+  adminPct          Decimal        @default(0) @db.Decimal(6, 4)
+  profitPct         Decimal        @default(0) @db.Decimal(6, 4)
+  status            ContractStatus @default(ACTIVE)
+  notes             String?        @db.Text
+  deletedAt         DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  createdById       String?
+  updatedById       String?
+
+  periods               ContractPeriod[]
+  billingHistory        BillingHistory[]
+  uniformExpenses       UniformExpense[]
+  auditFindings         AuditFinding[]
+  deferredDistributions DeferredDistribution[]
+  adminDistributions    AdminDistribution[]
+  auditLogs             AuditLog[]
+  expenses              Expense[]
+  expenseDistributions  ExpenseDistribution[] @relation("ExpenseDistributions")
+  positions             Position[]
+
+  @@index([company])
+  @@index([status])
+  @@index([deletedAt])
+  @@index([endDate])
+  @@map("contracts")
+}
+
+model BillingHistory {
+  id             String   @id @default(cuid())
+  contractId     String
+  periodMonth    DateTime
+  monthlyBilling Decimal  @db.Decimal(15, 2)
+  notes          String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  createdById    String?
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, periodMonth])
+  @@index([contractId])
+  @@index([periodMonth])
+  @@map("billing_history")
+}
+
+model ContractPeriod {
+  id             String   @id @default(cuid())
+  contractId     String
+  periodNumber   Int
+  startDate      DateTime
+  endDate        DateTime
+  monthlyBilling Decimal  @db.Decimal(15, 2)
+  notes          String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, periodNumber])
+  @@index([contractId])
+  @@map("contract_periods")
+}
+
+// ─── Uniform Expenses ─────────────────────────────────────────────────────────
+
+model UniformExpense {
+  id          String   @id @default(cuid())
+  contractId  String
+  periodMonth DateTime
+
+  shirtQty   Int     @default(0)
+  shirtCost  Decimal @default(0) @db.Decimal(12, 2)
+  pantsQty   Int     @default(0)
+  pantsCost  Decimal @default(0) @db.Decimal(12, 2)
+  shoesQty   Int     @default(0)
+  shoesCost  Decimal @default(0) @db.Decimal(12, 2)
+  capQty     Int     @default(0)
+  capCost    Decimal @default(0) @db.Decimal(12, 2)
+  vestQty    Int     @default(0)
+  vestCost   Decimal @default(0) @db.Decimal(12, 2)
+  beltQty    Int     @default(0)
+  beltCost   Decimal @default(0) @db.Decimal(12, 2)
+  bootsQty   Int     @default(0)
+  bootsCost  Decimal @default(0) @db.Decimal(12, 2)
+  otherQty   Int     @default(0)
+  otherCost  Decimal @default(0) @db.Decimal(12, 2)
+  otherDesc  String?
+
+  totalCost   Decimal  @default(0) @db.Decimal(15, 2)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, periodMonth])
+  @@index([contractId])
+  @@index([periodMonth])
+  @@map("uniform_expenses")
+}
+
+// ─── Audit Findings ───────────────────────────────────────────────────────────
+
+model AuditFinding {
+  id          String   @id @default(cuid())
+  contractId  String
+  postName    String
+  findingDate DateTime @default(now())
+
+  radioQty       Int     @default(0)
+  radioCost      Decimal @default(0) @db.Decimal(12, 2)
+  handcuffsQty   Int     @default(0)
+  handcuffsCost  Decimal @default(0) @db.Decimal(12, 2)
+  umbrellaQty    Int     @default(0)
+  umbrellaCost   Decimal @default(0) @db.Decimal(12, 2)
+  blackjackQty   Int     @default(0)
+  blackjackCost  Decimal @default(0) @db.Decimal(12, 2)
+  flashlightQty  Int     @default(0)
+  flashlightCost Decimal @default(0) @db.Decimal(12, 2)
+  otherQty       Int     @default(0)
+  otherCost      Decimal @default(0) @db.Decimal(12, 2)
+  otherDesc      String?
+
+  totalCost   Decimal   @default(0) @db.Decimal(15, 2)
+  status      String    @default("PENDING")
+  resolvedAt  DateTime?
+  notes       String?   @db.Text
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([contractId])
+  @@index([findingDate])
+  @@map("audit_findings")
+}
+
+// ─── Deferred Expenses ────────────────────────────────────────────────────────
+
+model DeferredExpense {
+  id            String          @id @default(cuid())
+  company       CompanyName
+  description   String
+  category      ExpenseCategory @default(OTHER)
+  totalAmount   Decimal         @db.Decimal(15, 2)
+  periodMonth   DateTime
+  isDistributed Boolean         @default(false)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  createdById   String?
+
+  distributions DeferredDistribution[]
+
+  @@index([company])
+  @@map("deferred_expenses")
+}
+
+model DeferredDistribution {
+  id                String   @id @default(cuid())
+  deferredExpenseId String
+  contractId        String
+  equivalencePct    Decimal  @db.Decimal(5, 4)
+  allocatedAmount   Decimal  @db.Decimal(15, 2)
+  createdAt         DateTime @default(now())
+
+  deferredExpense DeferredExpense @relation(fields: [deferredExpenseId], references: [id], onDelete: Cascade)
+  contract        Contract        @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([deferredExpenseId, contractId])
+  @@index([contractId])
+  @@map("deferred_distributions")
+}
+
+// ─── Admin Expenses ───────────────────────────────────────────────────────────
+
+model AdminExpense {
+  id            String          @id @default(cuid())
+  company       CompanyName
+  periodMonth   DateTime
+  transport     Decimal         @default(0) @db.Decimal(15, 2)
+  adminCosts    Decimal         @default(0) @db.Decimal(15, 2)
+  phones        Decimal         @default(0) @db.Decimal(15, 2)
+  phoneLines    Decimal         @default(0) @db.Decimal(15, 2)
+  fuel          Decimal         @default(0) @db.Decimal(15, 2)
+  otherAmount   Decimal         @default(0) @db.Decimal(15, 2)
+  otherDesc     String?
+  totalAmount   Decimal         @default(0) @db.Decimal(15, 2)
+  isDistributed Boolean         @default(false)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  createdById   String?
+
+  distributions AdminDistribution[]
+
+  @@unique([company, periodMonth])
+  @@index([company])
+  @@map("admin_expenses")
+}
+
+model AdminDistribution {
+  id              String   @id @default(cuid())
+  adminExpenseId  String
+  contractId      String
+  equivalencePct  Decimal  @db.Decimal(5, 4)
+  allocatedAmount Decimal  @db.Decimal(15, 2)
+  createdAt       DateTime @default(now())
+
+  adminExpense AdminExpense @relation(fields: [adminExpenseId], references: [id], onDelete: Cascade)
+  contract      Contract     @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([adminExpenseId, contractId])
+  @@index([contractId])
+  @@map("admin_distributions")
+}
+
+// ─── Audit Log ────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id           String    @id @default(cuid())
+  userId       String
+  contractId   String?
+  entityType   String
+  entityId     String
+  action       String
+  previousData String?   @db.Text
+  newData      String?   @db.Text
+  ipAddress    String?
+  createdAt    DateTime  @default(now())
+
+  user     User      @relation(fields: [userId], references: [id])
+  contract Contract? @relation(fields: [contractId], references: [id])
+
+  @@index([userId])
+  @@index([contractId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ─── Unified Expenses ─────────────────────────────────────────────────────────
+
+model Position {
+  id          String   @id @default(cuid())
+  contractId  String
+  contract    Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  shift       String?
+  location    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  expenses    Expense[]
+
+  @@index([contractId])
+  @@map("positions")
+}
+
+model ExpenseTypeConfig {
+  id          String      @id @default(cuid())
+  type        ExpenseType @unique
+  label       String
+  color       String      @default("bg-gray-100 text-gray-700")
+  isActive    Boolean     @default(true)
+  sortOrder   Int         @default(0)
+  updatedAt   DateTime    @updatedAt
+
+  @@map("expense_type_configs")
+}
+
+model ExpenseOrigin {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  isActive    Boolean   @default(true)
+  sortOrder   Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  expenses    Expense[]
+
+  @@map("expense_origins")
+}
+
+model Expense {
+  id              String        @id @default(cuid())
+  type            ExpenseType
+  budgetLine      ExpenseBudgetLine?
+  description     String
+  amount          Decimal       @db.Decimal(15, 2)
+  periodMonth     DateTime
+  contractId      String?
+  contract        Contract?     @relation(fields: [contractId], references: [id])
+  positionId      String?
+  position        Position?     @relation(fields: [positionId], references: [id])
+  originId        String?
+  origin          ExpenseOrigin? @relation(fields: [originId], references: [id])
+  referenceNumber String?
+  company         CompanyName?
+  isDeferred      Boolean       @default(false)
+  isDistributed   Boolean       @default(false)
+  notes           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  createdById     String
+  createdBy       User          @relation("ExpenseCreatedBy", fields: [createdById], references: [id])
+  distributions   ExpenseDistribution[]
+
+  @@index([contractId])
+  @@index([positionId])
+  @@index([originId])
+  @@index([company])
+  @@map("expenses")
+}
+
+model ExpenseDistribution {
+  id              String   @id @default(cuid())
+  expenseId       String
+  expense         Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  contractId      String
+  contract        Contract @relation("ExpenseDistributions", fields: [contractId], references: [id], onDelete: Cascade)
+  equivalencePct  Decimal  @db.Decimal(10, 8)
+  allocatedAmount Decimal  @db.Decimal(15, 2)
+  createdAt       DateTime @default(now())
+
+  @@unique([expenseId, contractId])
+  @@index([contractId])
+  @@map("expense_distributions")
+}

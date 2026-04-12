@@ -1,0 +1,43 @@
+# Uso en el VPS (p. ej. Contabo): copie el repo, cree .env.production y ejecute:
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# PostgreSQL solo escucha en la red interna de Docker (no expone 5432 al exterior).
+# La app escucha en 0.0.0.0:3000 — ponga Nginx/Caddy delante con HTTPS o restrinja el firewall.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: security_contracts_db
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: security_contracts_app
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      TZ: ${TZ:-America/Costa_Rica}
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env.production
+
+volumes:
+  postgres_data:
