@@ -1,6 +1,10 @@
 # Uso en el VPS (p. ej. Contabo): copie el repo, cree .env.production y ejecute:
 #   docker compose -f docker-compose.prod.yml up -d --build
 #
+# Al arrancar, el contenedor app ejecuta `prisma migrate deploy` (tabla companies, etc.).
+# Si la base ya tenía datos pero nunca migraciones Prisma, puede fallar con P3005:
+#   aplique el SQL de prisma/migrations/... manualmente y marque la migración como aplicada, o use baseline.
+#
 # PostgreSQL solo escucha en la red interna de Docker (no expone 5432 al exterior).
 # La app escucha en 0.0.0.0:3000 — ponga Nginx/Caddy delante con HTTPS o restrinja el firewall.
 

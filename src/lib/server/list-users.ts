@@ -30,9 +30,16 @@ export type ListedUser = {
  * Lista usuarios. Si `findMany` falla (p. ej. datos legacy), usa SQL leyendo `role`/`company` como texto.
  */
 export async function listUsersForAdmin(prisma: PrismaClient): Promise<ListedUser[]> {
-  const validCodes = new Set(
-    (await prisma.company.findMany({ select: { code: true } })).map((c) => c.code)
-  );
+  let validCodes = new Set<string>();
+  try {
+    const companies = await prisma.company.findMany({ select: { code: true } });
+    validCodes = new Set(companies.map((c) => c.code));
+  } catch (e) {
+    console.warn(
+      "[listUsersForAdmin] Catálogo companies no disponible (¿falta migrar la base?). Se omitirá validación de empresa.",
+      e
+    );
+  }
   function normalizeCompany(raw: string | null): string | null {
     if (!raw) return null;
     return validCodes.has(raw) ? raw : null;

@@ -24,6 +24,11 @@ export async function GET() {
     });
     return ok(rows);
   } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2021") {
+      return badRequest(
+        "La tabla de empresas no existe. Aplique migraciones en el servidor (al iniciar el contenedor Docker se ejecuta prisma migrate deploy; revise logs si falla)."
+      );
+    }
     return serverError("Error al listar empresas", e);
   }
 }

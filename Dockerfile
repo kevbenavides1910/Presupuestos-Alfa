@@ -28,8 +28,11 @@ COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modul
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
 # Para prisma/reset-admin-password.js (no siempre incluido en el trace de standalone)
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/bcryptjs ./node_modules/bcryptjs
+USER root
+# CLI de Prisma para aplicar migraciones al arrancar (tabla companies, FKs, etc.)
+RUN npm install -g prisma@5.22.0
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
-CMD ["node", "server.js"]
+CMD ["sh", "-c", "prisma migrate deploy && exec node server.js"]

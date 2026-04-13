@@ -1,6 +1,7 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/api/middleware";
-import { ok, unauthorized, serverError } from "@/lib/api/response";
+import { ok, unauthorized, badRequest, serverError } from "@/lib/api/response";
 
 /** Catálogo de empresas (activas e inactivas). Selectores deben filtrar `isActive` en cliente. */
 export async function GET() {
@@ -14,6 +15,11 @@ export async function GET() {
     });
     return ok(rows);
   } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2021") {
+      return badRequest(
+        "La tabla de empresas no existe en la base de datos. Revise que el contenedor aplicó las migraciones al iniciar (prisma migrate deploy) o ejecute la migración en el servidor."
+      );
+    }
     return serverError("Error al listar empresas", e);
   }
 }
