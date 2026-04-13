@@ -26,6 +26,8 @@ COPY --from=builder /app/prisma ./prisma
 # Prisma no siempre queda trazado en standalone; aseguramos cliente y motores
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
+# Para prisma/reset-admin-password.js (no siempre incluido en el trace de standalone)
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/bcryptjs ./node_modules/bcryptjs
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000
