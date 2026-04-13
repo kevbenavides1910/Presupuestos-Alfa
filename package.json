@@ -15,6 +15,7 @@
     "db:fix-user-role-enum": "prisma db execute --file prisma/fix-user-role-enum.sql --schema prisma/schema.prisma",
     "db:migrate": "prisma migrate dev",
     "db:seed": "ts-node prisma/seed.ts",
+    "db:reset-admin-passwords": "node prisma/reset-admin-password.js",
     "db:clear-business": "ts-node prisma/clear-business-data.ts",
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset"
