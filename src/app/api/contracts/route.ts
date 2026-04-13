@@ -7,6 +7,7 @@ import { recalculateEquivalence, getGlobalPartidaTotals } from "@/lib/business/e
 import { autoExpireContracts } from "@/lib/business/autoExpire";
 import { buildContractListWhere } from "@/lib/server/contracts-list-where";
 import { enrichContractsListRows } from "@/lib/server/contracts-list-enrichment";
+import { requireCompanyCode } from "@/lib/server/companies";
 
 export async function GET(req: NextRequest) {
   const session = await getSession();
@@ -57,6 +58,9 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) return badRequest("Datos inválidos", parsed.error.flatten());
 
     const data = parsed.data;
+
+    const companyOk = await requireCompanyCode(prisma, data.company, { mustBeActive: true });
+    if (!companyOk.ok) return badRequest(companyOk.message);
 
     // Check duplicate
     const existing = await prisma.contract.findUnique({

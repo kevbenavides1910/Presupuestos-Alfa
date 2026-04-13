@@ -11,8 +11,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { formatCurrency, formatDate, daysUntilExpiry } from "@/lib/utils/format";
-import { COMPANY_LABELS, TrafficLight } from "@/lib/utils/constants";
-import type { CompanyName } from "@prisma/client";
+import { companyDisplayName, TrafficLight } from "@/lib/utils/constants";
+import { useCompanies } from "@/lib/hooks/use-companies";
 import Link from "next/link";
 
 function currentMonth() {
@@ -35,7 +35,7 @@ interface TrafficLightReport {
 }
 
 interface ContractRow {
-  contractId: string; licitacionNo: string; company: CompanyName;
+  contractId: string; licitacionNo: string; company: string;
   client: string; status: string; startDate: string; endDate: string;
   monthlyBilling: number; suppliesBudget: number; grandTotal: number;
   budgetUsagePctFormatted: number; trafficLight: TrafficLight; isOverBudget: boolean;
@@ -43,6 +43,8 @@ interface ContractRow {
 
 export default function DashboardPage() {
   const [month, setMonth] = useState(currentMonth());
+  const { data: companiesRes } = useCompanies();
+  const companyRows = companiesRes?.data ?? [];
 
   const { data, isLoading } = useQuery<{ data: TrafficLightReport }>({
     queryKey: ["traffic-light", month],
@@ -182,7 +184,7 @@ export default function DashboardPage() {
               <div className="divide-y">
                 {Object.entries(byCompany).map(([company, stats]) => (
                   <div key={company} className="flex items-center justify-between px-6 py-3">
-                    <span className="text-sm font-medium">{COMPANY_LABELS[company as CompanyName]}</span>
+                    <span className="text-sm font-medium">{companyDisplayName(company, companyRows)}</span>
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs text-green-600 font-medium w-6 text-center">{stats.green}</span>
                       <span className="text-xs text-yellow-600 font-medium w-6 text-center">{stats.yellow}</span>
@@ -215,7 +217,7 @@ export default function DashboardPage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium truncate">{c.client}</span>
-                        <Badge variant="outline" className="text-xs shrink-0">{c.company}</Badge>
+                        <Badge variant="outline" className="text-xs shrink-0">{companyDisplayName(c.company, companyRows)}</Badge>
                       </div>
                       <BudgetBar
                         pct={c.budgetUsagePctFormatted}
@@ -260,7 +262,7 @@ export default function DashboardPage() {
                     >
                       <div>
                         <span className="text-sm font-medium">{c.client}</span>
-                        <span className="text-xs text-slate-400 ml-2">— {COMPANY_LABELS[c.company]}</span>
+                        <span className="text-xs text-slate-400 ml-2">— {companyDisplayName(c.company, companyRows)}</span>
                         <div className="text-xs text-slate-400 mt-0.5">
                           Inicio: {formatDate(c.startDate)} · Vence: {formatDate(c.endDate)}
                         </div>

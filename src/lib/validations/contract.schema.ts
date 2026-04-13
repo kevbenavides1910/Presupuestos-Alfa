@@ -1,10 +1,11 @@
 import { z } from "zod";
+import { companyCodeSchema } from "@/lib/validations/company-code";
 
 const pct = z.number().min(0).max(1).default(0);
 
 const contractInputSchema = z.object({
   licitacionNo: z.string().min(3, "Número de licitación requerido"),
-  company: z.enum(["CONSORCIO", "MONITOREO", "TANGO", "ALFA", "ALFATRONIC", "BENLO", "BENA", "JOBEN", "GRUPO", "ACE"]),
+  company: companyCodeSchema,
   client: z.string().min(2, "Cliente requerido"),
   clientType: z.enum(["PUBLIC", "PRIVATE"]),
   officersCount: z.number().int().min(1, "Mínimo 1 oficial"),

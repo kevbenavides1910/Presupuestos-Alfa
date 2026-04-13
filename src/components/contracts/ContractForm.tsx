@@ -15,9 +15,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "@/components/ui/toaster";
 import { contractCreateSchema, type ContractCreateInput } from "@/lib/validations/contract.schema";
-import { COMPANIES, COMPANY_LABELS, CLIENT_TYPE_LABELS, CONTRACT_STATUS_LABELS } from "@/lib/utils/constants";
+import { CLIENT_TYPE_LABELS, CONTRACT_STATUS_LABELS } from "@/lib/utils/constants";
+import { useCompanies } from "@/lib/hooks/use-companies";
 import { canModifyContracts } from "@/lib/permissions";
 import { format } from "date-fns";
+import { parseNumber, parsePercent } from "@/lib/import/xlsx-read";
 
 interface PositionDraft {
   name: string;
@@ -37,6 +39,9 @@ export function ContractForm({ defaultValues, mode = "create" }: Props) {
   const { data: session, status } = useSession();
   const canEdit =
     session?.user?.role !== undefined && canModifyContracts(session.user.role);
+
+  const { data: companiesRes, isLoading: companiesLoading } = useCompanies();
+  const activeCompanies = (companiesRes?.data ?? []).filter((c) => c.isActive);
 
   // Inline positions (only for create mode)
   const [positions, setPositions] = useState<PositionDraft[]>([]);
@@ -186,11 +191,12 @@ export function ContractForm({ defaultValues, mode = "create" }: Props) {
             <Select
               defaultValue={defaultValues?.company}
               onValueChange={(v) => setValue("company", v as never)}
+              disabled={companiesLoading}
             >
-              <SelectTrigger><SelectValue placeholder="Seleccionar empresa" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder={companiesLoading ? "Cargando empresas…" : "Seleccionar empresa"} /></SelectTrigger>
               <SelectContent>
-                {COMPANIES.map((c) => (
-                  <SelectItem key={c} value={c}>{COMPANY_LABELS[c]}</SelectItem>
+                {activeCompanies.map((c) => (
+                  <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -346,11 +352,21 @@ export function ContractForm({ defaultValues, mode = "create" }: Props) {
               <Label htmlFor="monthlyBilling">Facturación Mensual (₡) *</Label>
               <Input
                 id="monthlyBilling"
-                type="number"
-                min="0"
-                {...register("monthlyBilling", { valueAsNumber: true })}
-                placeholder="18500000"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                {...register("monthlyBilling", {
+                  setValueAs: (v) => {
+                    if (v === "" || v === null || v === undefined) return Number.NaN;
+                    const n = parseNumber(v);
+                    return n === null ? Number.NaN : n;
+                  },
+                })}
+                placeholder="Ej: 6 835 131,34"
               />
+              <p className="text-xs text-slate-400">
+                Coma o punto como decimal; puede usar espacios como separador de miles (formato local).
+              </p>
               {errors.monthlyBilling && <p className="text-xs text-red-600">{errors.monthlyBilling.message}</p>}
             </div>
             <div className="text-sm text-slate-500 flex items-end pb-1">
@@ -365,6 +381,7 @@ export function ContractForm({ defaultValues, mode = "create" }: Props) {
                 <p className="text-sm font-medium text-slate-700">Distribución del contrato</p>
                 <p className="text-xs text-slate-400">
                   Ingrese el % de cada rubro sobre la facturación mensual. La suma debe ser 100%.
+                  Puede usar fracción (<span className="font-mono">0,9333</span>), porcentaje (<span className="font-mono">93,33%</span>) o coma/punto decimal.
                   El rubro <span className="font-medium text-purple-800">Insumos</span> define el % destinado al presupuesto de insumos del contrato.
                 </p>
               </div>
@@ -394,13 +411,18 @@ export function ContractForm({ defaultValues, mode = "create" }: Props) {
                     <div className="flex items-center gap-1">
                       <Input
                         id={item.id}
-                        type="number"
-                        step="0.001"
-                        min="0"
-                        max="1"
+                        type="text"
+                        inputMode="decimal"
+                        autoComplete="off"
                         className="h-8 text-sm bg-white"
-                        {...register(item.field, { valueAsNumber: true })}
-                        placeholder="0.00"
+                        {...register(item.field, {
+                          setValueAs: (v) => {
+                            if (v === "" || v === null || v === undefined) return Number.NaN;
+                            const n = parsePercent(v);
+                            return n === null ? Number.NaN : n;
+                          },
+                        })}
+                        placeholder="0,93"
                       />
                       <span className="text-xs text-slate-500 shrink-0">
                         {((watchedVal || 0) * 100).toFixed(1)}%

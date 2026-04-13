@@ -9,14 +9,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { MultiSelect } from "@/components/ui/multi-select";
 import { formatCurrency } from "@/lib/utils/format";
 import {
-  COMPANIES,
-  COMPANY_LABELS,
+  companyDisplayName,
   CONTRACT_STATUS_LABELS,
   REPORT_PARTIDA_OPTIONS,
   type ReportPartidaFilter,
 } from "@/lib/utils/constants";
+import { useCompanies } from "@/lib/hooks/use-companies";
 import type { AnnualReport, MonthCell } from "@/lib/business/annualProfitability";
-import type { CompanyName } from "@prisma/client";
 import { ContractMonthDrilldownDialog, type MonthDrilldownTarget } from "@/components/reports/ContractMonthDrilldownDialog";
 
 const MONTH_LABELS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
@@ -183,6 +182,8 @@ export default function AnnualReportPage() {
   const [selectedPartida, setSelectedPartida] = useState<ReportPartidaFilter>("ALL");
   const [view, setView] = useState<ViewMode>("rentabilidad");
   const [monthDrilldown, setMonthDrilldown] = useState<MonthDrilldownTarget | null>(null);
+  const { data: companiesRes } = useCompanies();
+  const companyRows = companiesRes?.data ?? [];
 
   const serverYear = year || new Date().getFullYear();
   const yearOpts = Array.from({ length: 6 }, (_, i) => serverYear - i + 1);
@@ -264,7 +265,7 @@ export default function AnnualReportPage() {
           <div>
             <label className="text-xs font-medium text-slate-600 block mb-1">Empresa</label>
             <MultiSelect
-              options={COMPANIES.map((c) => ({ value: c, label: COMPANY_LABELS[c] }))}
+              options={companyRows.map((c) => ({ value: c.code, label: c.name }))}
               value={companies}
               onChange={setCompanies}
               placeholder="Todas las empresas"
@@ -376,7 +377,7 @@ export default function AnnualReportPage() {
                           </Badge>
                         </td>
                         <td className="px-3 py-2">
-                          <span className="text-xs font-medium text-slate-600">{COMPANY_LABELS[row.company as CompanyName]}</span>
+                          <span className="text-xs font-medium text-slate-600">{companyDisplayName(row.company, companyRows)}</span>
                         </td>
                         {view === "rentabilidad" && row.months.map((cell) => (
                           <SurplusCell

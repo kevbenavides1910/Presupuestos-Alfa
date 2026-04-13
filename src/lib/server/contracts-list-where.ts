@@ -1,5 +1,5 @@
 import type { Session } from "next-auth";
-import type { CompanyName, ContractStatus } from "@prisma/client";
+import type { ContractStatus } from "@prisma/client";
 import { monthsAgoServer } from "@/lib/utils/time";
 
 /** Misma lógica de filtro que GET /api/contracts (búsqueda, empresa, estado, assignable, etc.). */
@@ -7,7 +7,7 @@ export function buildContractListWhere(
   session: Session,
   searchParams: URLSearchParams
 ): Record<string, unknown> {
-  const companyValues = searchParams.getAll("company") as CompanyName[];
+  const companyValues = searchParams.getAll("company");
   const status = searchParams.get("status") as ContractStatus | null;
   const clientType = searchParams.get("clientType");
   const search = searchParams.get("search");

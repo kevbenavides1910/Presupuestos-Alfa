@@ -17,19 +17,6 @@ enum UserRole {
   CONSULTA
 }
 
-enum CompanyName {
-  CONSORCIO
-  MONITOREO
-  TANGO
-  ALFA
-  ALFATRONIC
-  BENLO
-  BENA
-  JOBEN
-  GRUPO
-  ACE
-}
-
 enum ClientType {
   PUBLIC
   PRIVATE
@@ -74,6 +61,25 @@ enum ExpenseBudgetLine {
   PROFIT      // Utilidad
 }
 
+// ─── Catálogo de empresas (código estable en mayúsculas, ej. ALFA) ─────────────
+
+model Company {
+  code      String   @id
+  name      String
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users            User[]
+  contracts        Contract[]
+  deferredExpenses DeferredExpense[]
+  adminExpenses    AdminExpense[]
+  expenses         Expense[]
+
+  @@map("companies")
+}
+
 // ─── Auth (NextAuth) ──────────────────────────────────────────────────────────
 
 model User {
@@ -84,7 +90,8 @@ model User {
   image         String?
   passwordHash  String?
   role          UserRole  @default(CONSULTA)
-  company       CompanyName?
+  company       String?
+  companyEntity Company?  @relation(fields: [company], references: [code])
   isActive      Boolean   @default(true)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -142,7 +149,8 @@ model VerificationToken {
 model Contract {
   id                String         @id @default(cuid())
   licitacionNo      String         @unique
-  company           CompanyName
+  company           String
+  companyEntity     Company        @relation(fields: [company], references: [code])
   client            String
   clientType        ClientType     @default(PUBLIC)
   officersCount     Int            @default(0)
@@ -298,7 +306,8 @@ model AuditFinding {
 
 model DeferredExpense {
   id            String          @id @default(cuid())
-  company       CompanyName
+  company       String
+  companyEntity Company         @relation(fields: [company], references: [code])
   description   String
   category      ExpenseCategory @default(OTHER)
   totalAmount   Decimal         @db.Decimal(15, 2)
@@ -334,7 +343,8 @@ model DeferredDistribution {
 
 model AdminExpense {
   id            String          @id @default(cuid())
-  company       CompanyName
+  company       String
+  companyEntity Company         @relation(fields: [company], references: [code])
   periodMonth   DateTime
   transport     Decimal         @default(0) @db.Decimal(15, 2)
   adminCosts    Decimal         @default(0) @db.Decimal(15, 2)
@@ -452,7 +462,8 @@ model Expense {
   originId        String?
   origin          ExpenseOrigin? @relation(fields: [originId], references: [id])
   referenceNumber String?
-  company         CompanyName?
+  company         String?
+  companyEntity   Company?      @relation(fields: [company], references: [code])
   isDeferred      Boolean       @default(false)
   isDistributed   Boolean       @default(false)
   notes           String?

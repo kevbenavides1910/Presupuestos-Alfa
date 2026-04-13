@@ -4,6 +4,7 @@ import { getSession, isAdmin } from "@/lib/api/middleware";
 import { ok, badRequest, unauthorized, forbidden, notFound, serverError } from "@/lib/api/response";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
+import { requireCompanyCode } from "@/lib/server/companies";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -30,6 +31,10 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     if (!parsed.success) return badRequest("Datos inválidos", parsed.error.flatten());
 
     const { password, ...rest } = parsed.data;
+    if (rest.company) {
+      const companyOk = await requireCompanyCode(prisma, rest.company, { mustBeActive: true });
+      if (!companyOk.ok) return badRequest(companyOk.message);
+    }
     const data: Record<string, unknown> = { ...rest };
     if (password) {
       data.passwordHash = await bcrypt.hash(password, 12);

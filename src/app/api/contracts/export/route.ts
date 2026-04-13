@@ -7,8 +7,8 @@ import { getGlobalPartidaTotals } from "@/lib/business/equivalence";
 import { autoExpireContracts } from "@/lib/business/autoExpire";
 import { buildContractListWhere } from "@/lib/server/contracts-list-where";
 import { enrichContractsListRows } from "@/lib/server/contracts-list-enrichment";
-import { COMPANY_LABELS, CONTRACT_STATUS_LABELS, CLIENT_TYPE_LABELS } from "@/lib/utils/constants";
-import type { CompanyName, ContractStatus, ClientType } from "@prisma/client";
+import { companyDisplayName, CONTRACT_STATUS_LABELS, CLIENT_TYPE_LABELS } from "@/lib/utils/constants";
+import type { ContractStatus, ClientType } from "@prisma/client";
 
 const EXPORT_MAX = 10_000;
 
@@ -50,6 +50,10 @@ export async function GET(req: NextRequest) {
   const asOf = new Date();
   const rows = enrichContractsListRows(contracts, allHistory, globalTotals, asOf);
 
+  const companyCatalog = await prisma.company.findMany({
+    select: { code: true, name: true },
+  });
+
   const header = [
     "Licitación",
     "Cliente",
@@ -78,13 +82,13 @@ export async function GET(req: NextRequest) {
   ];
 
   const dataRows = rows.map((c) => {
-    const company = c.company as CompanyName;
+    const companyCode = c.company;
     const status = c.status as ContractStatus;
     const ct = c.clientType as ClientType;
     return [
       c.licitacionNo,
       c.client,
-      COMPANY_LABELS[company] ?? company,
+      companyDisplayName(companyCode, companyCatalog),
       CLIENT_TYPE_LABELS[ct] ?? ct,
       c.officersCount,
       c.positionsCount,

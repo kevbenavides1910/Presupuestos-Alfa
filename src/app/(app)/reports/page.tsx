@@ -12,16 +12,15 @@ import { TrafficLightBadge } from "@/components/shared/TrafficLightBadge";
 import { MetricCard } from "@/components/shared/MetricCard";
 import { formatCurrency, toMonthString } from "@/lib/utils/format";
 import {
-  COMPANIES,
-  COMPANY_LABELS,
+  companyDisplayName,
   CLIENT_TYPE_LABELS,
   CONTRACT_STATUS_LABELS,
   TrafficLight,
   REPORT_PARTIDA_OPTIONS,
   type ReportPartidaFilter,
 } from "@/lib/utils/constants";
+import { useCompanies } from "@/lib/hooks/use-companies";
 import { BarChart3, Download, DollarSign, TrendingUp, AlertTriangle, FileText } from "lucide-react";
-import type { CompanyName } from "@prisma/client";
 import * as XLSX from "xlsx";
 
 interface ExpenseTypeColumn {
@@ -31,7 +30,7 @@ interface ExpenseTypeColumn {
 
 interface ProfitabilityRow {
   contractId: string;
-  licitacionNo: string; company: CompanyName; client: string; clientType: string;
+  licitacionNo: string; company: string; client: string; clientType: string;
   status: string; officersCount: number; positionsCount: number; equivalencePct: number;
   monthlyBilling: number;
   suppliesBudgetPct: number;
@@ -72,6 +71,8 @@ export default function ReportsPage() {
   const [selectedCompany, setSelectedCompany] = useState("all");
   const [selectedMonth, setSelectedMonth] = useState(toMonthString(new Date()));
   const [selectedPartida, setSelectedPartida] = useState<ReportPartidaFilter>("ALL");
+  const { data: companiesRes } = useCompanies();
+  const companyRows = companiesRes?.data ?? [];
 
   const params = new URLSearchParams();
   if (selectedCompany !== "all") params.set("company", selectedCompany);
@@ -108,7 +109,7 @@ export default function ReportsPage() {
       const o: Record<string, string | number> = {
         "ID contrato": r.contractId,
         "N° Licitación": r.licitacionNo,
-        Empresa: COMPANY_LABELS[r.company],
+        Empresa: companyDisplayName(r.company, companyRows),
         Cliente: r.client,
         Tipo: CLIENT_TYPE_LABELS[r.clientType as keyof typeof CLIENT_TYPE_LABELS],
         Estado: CONTRACT_STATUS_LABELS[r.status as keyof typeof CONTRACT_STATUS_LABELS],
@@ -233,7 +234,7 @@ export default function ReportsPage() {
             <SelectTrigger className="w-48"><SelectValue placeholder="Empresa" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todas las empresas</SelectItem>
-              {COMPANIES.map((c) => <SelectItem key={c} value={c}>{COMPANY_LABELS[c]}</SelectItem>)}
+              {companyRows.map((c) => <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>)}
             </SelectContent>
           </Select>
           <input
@@ -353,7 +354,7 @@ export default function ReportsPage() {
                           <div className="truncate">{r.client}</div>
                         </td>
                         <td className="px-3 py-2">
-                          <Badge variant="outline" className="text-xs">{r.company}</Badge>
+                          <Badge variant="outline" className="text-xs">{companyDisplayName(r.company, companyRows)}</Badge>
                         </td>
                         <td className="px-3 py-2 text-right">{formatCurrency(r.monthlyBilling)}</td>
                         {partida === "ALL" ? (

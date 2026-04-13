@@ -1,18 +1,6 @@
 import { z } from "zod";
-import { CompanyName, ExpenseBudgetLine, ExpenseCategory, ExpenseType } from "@prisma/client";
-
-const companyEnum = z.enum([
-  "CONSORCIO",
-  "MONITOREO",
-  "TANGO",
-  "ALFA",
-  "ALFATRONIC",
-  "BENLO",
-  "BENA",
-  "JOBEN",
-  "GRUPO",
-  "ACE",
-] as [CompanyName, ...CompanyName[]]);
+import { ExpenseBudgetLine, ExpenseCategory, ExpenseType } from "@prisma/client";
+import { companyCodeSchema } from "@/lib/validations/company-code";
 
 const expenseCategoryEnum = z.enum([
   "UNIFORMS",
@@ -49,7 +37,7 @@ export const expenseCreateSchema = z
     positionId: z.string().optional(),
     originId: z.string().optional(),
     referenceNumber: z.string().optional(),
-    company: companyEnum,
+    company: companyCodeSchema,
     isDeferred: z.boolean().default(false),
     notes: z.string().optional(),
     spreadMonths: z.coerce.number().int().min(1).max(60).default(1),
@@ -66,7 +54,7 @@ export type ExpenseCreateInput = z.infer<typeof expenseCreateSchema>;
 // ─── Gastos administrativos globales (por empresa / mes) ─────────────────────
 
 export const adminExpenseSchema = z.object({
-  company: companyEnum,
+  company: companyCodeSchema,
   periodMonth: z.string(),
   transport: z.coerce.number().min(0),
   adminCosts: z.coerce.number().min(0),
@@ -82,7 +70,7 @@ export type AdminExpenseInput = z.infer<typeof adminExpenseSchema>;
 // ─── Gastos diferidos globales ───────────────────────────────────────────────
 
 export const deferredExpenseSchema = z.object({
-  company: companyEnum,
+  company: companyCodeSchema,
   description: z.string().min(1, "Descripción requerida"),
   category: expenseCategoryEnum,
   totalAmount: z.number().positive("El monto debe ser positivo"),

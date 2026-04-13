@@ -1,70 +1,88 @@
-import { PrismaClient, CompanyName, ClientType, ContractStatus, UserRole } from "@prisma/client";
+import { PrismaClient, ClientType, ContractStatus, UserRole } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
-const COMPANIES: CompanyName[] = [
-  "CONSORCIO", "MONITOREO", "TANGO", "ALFA",
-  "ALFATRONIC", "BENLO", "BENA", "JOBEN", "GRUPO", "ACE",
-];
+const COMPANY_SEED_ROWS = [
+  { code: "CONSORCIO", name: "Consorcio", sortOrder: 1 },
+  { code: "MONITOREO", name: "Monitoreo", sortOrder: 2 },
+  { code: "TANGO", name: "Tango", sortOrder: 3 },
+  { code: "ALFA", name: "Alfa", sortOrder: 4 },
+  { code: "ALFATRONIC", name: "Alfatronic", sortOrder: 5 },
+  { code: "BENLO", name: "Benlo", sortOrder: 6 },
+  { code: "BENA", name: "Bena", sortOrder: 7 },
+  { code: "JOBEN", name: "Joben", sortOrder: 8 },
+  { code: "GRUPO", name: "Grupo", sortOrder: 9 },
+  { code: "ACE", name: "ACE", sortOrder: 10 },
+] as const;
+
+const COMPANY_CODES = COMPANY_SEED_ROWS.map((r) => r.code);
 
 // Sample contracts per company (represents real ~90 contracts across group)
 const SAMPLE_CONTRACTS = [
   // CONSORCIO
-  { licitacionNo: "LIC-CCSS-001-2023", company: "CONSORCIO" as CompanyName, client: "CCSS - Hospital México", clientType: "PUBLIC" as ClientType, officersCount: 45, positionsCount: 22, monthlyBilling: 18500000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-01-01"), endDate: new Date("2026-12-31") },
-  { licitacionNo: "LIC-CCSS-002-2023", company: "CONSORCIO" as CompanyName, client: "CCSS - Hospital San Juan de Dios", clientType: "PUBLIC" as ClientType, officersCount: 38, positionsCount: 18, monthlyBilling: 15200000, suppliesBudgetPct: 0.07, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-03-01"), endDate: new Date("2026-02-28") },
-  { licitacionNo: "LIC-UCR-001-2022", company: "CONSORCIO" as CompanyName, client: "Universidad de Costa Rica", clientType: "PUBLIC" as ClientType, officersCount: 55, positionsCount: 28, monthlyBilling: 22000000, suppliesBudgetPct: 0.09, status: "ACTIVE" as ContractStatus, startDate: new Date("2022-08-01"), endDate: new Date("2025-07-31") },
-  { licitacionNo: "LIC-PRIV-001-2024", company: "CONSORCIO" as CompanyName, client: "Banco BAC San José", clientType: "PRIVATE" as ClientType, officersCount: 12, positionsCount: 6, monthlyBilling: 4800000, suppliesBudgetPct: 0.06, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-01-01"), endDate: new Date("2024-12-31") },
+  { licitacionNo: "LIC-CCSS-001-2023", company: "CONSORCIO", client: "CCSS - Hospital México", clientType: "PUBLIC" as ClientType, officersCount: 45, positionsCount: 22, monthlyBilling: 18500000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-01-01"), endDate: new Date("2026-12-31") },
+  { licitacionNo: "LIC-CCSS-002-2023", company: "CONSORCIO", client: "CCSS - Hospital San Juan de Dios", clientType: "PUBLIC" as ClientType, officersCount: 38, positionsCount: 18, monthlyBilling: 15200000, suppliesBudgetPct: 0.07, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-03-01"), endDate: new Date("2026-02-28") },
+  { licitacionNo: "LIC-UCR-001-2022", company: "CONSORCIO", client: "Universidad de Costa Rica", clientType: "PUBLIC" as ClientType, officersCount: 55, positionsCount: 28, monthlyBilling: 22000000, suppliesBudgetPct: 0.09, status: "ACTIVE" as ContractStatus, startDate: new Date("2022-08-01"), endDate: new Date("2025-07-31") },
+  { licitacionNo: "LIC-PRIV-001-2024", company: "CONSORCIO", client: "Banco BAC San José", clientType: "PRIVATE" as ClientType, officersCount: 12, positionsCount: 6, monthlyBilling: 4800000, suppliesBudgetPct: 0.06, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-01-01"), endDate: new Date("2024-12-31") },
 
   // MONITOREO
-  { licitacionNo: "LIC-ICE-001-2023", company: "MONITOREO" as CompanyName, client: "ICE - Sede Central", clientType: "PUBLIC" as ClientType, officersCount: 20, positionsCount: 10, monthlyBilling: 8200000, suppliesBudgetPct: 0.07, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-06-01"), endDate: new Date("2026-05-31") },
-  { licitacionNo: "LIC-INA-001-2022", company: "MONITOREO" as CompanyName, client: "INA - Sede Heredia", clientType: "PUBLIC" as ClientType, officersCount: 15, positionsCount: 7, monthlyBilling: 6000000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2022-10-01"), endDate: new Date("2025-09-30") },
-  { licitacionNo: "LIC-PRIV-002-2023", company: "MONITOREO" as CompanyName, client: "Mall San Pedro", clientType: "PRIVATE" as ClientType, officersCount: 25, positionsCount: 12, monthlyBilling: 9500000, suppliesBudgetPct: 0.06, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-01-01"), endDate: new Date("2025-12-31") },
+  { licitacionNo: "LIC-ICE-001-2023", company: "MONITOREO", client: "ICE - Sede Central", clientType: "PUBLIC" as ClientType, officersCount: 20, positionsCount: 10, monthlyBilling: 8200000, suppliesBudgetPct: 0.07, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-06-01"), endDate: new Date("2026-05-31") },
+  { licitacionNo: "LIC-INA-001-2022", company: "MONITOREO", client: "INA - Sede Heredia", clientType: "PUBLIC" as ClientType, officersCount: 15, positionsCount: 7, monthlyBilling: 6000000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2022-10-01"), endDate: new Date("2025-09-30") },
+  { licitacionNo: "LIC-PRIV-002-2023", company: "MONITOREO", client: "Mall San Pedro", clientType: "PRIVATE" as ClientType, officersCount: 25, positionsCount: 12, monthlyBilling: 9500000, suppliesBudgetPct: 0.06, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-01-01"), endDate: new Date("2025-12-31") },
 
   // TANGO
-  { licitacionNo: "LIC-PJ-001-2024", company: "TANGO" as CompanyName, client: "Poder Judicial - OIJ", clientType: "PUBLIC" as ClientType, officersCount: 60, positionsCount: 30, monthlyBilling: 24000000, suppliesBudgetPct: 0.10, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-01-01"), endDate: new Date("2027-12-31") },
-  { licitacionNo: "LIC-UCR-002-2023", company: "TANGO" as CompanyName, client: "UCR - Ciudad Universitaria", clientType: "PUBLIC" as ClientType, officersCount: 30, positionsCount: 14, monthlyBilling: 11500000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-07-01"), endDate: new Date("2026-06-30") },
-  { licitacionNo: "LIC-PRIV-003-2024", company: "TANGO" as CompanyName, client: "Almacenes El Rey", clientType: "PRIVATE" as ClientType, officersCount: 18, positionsCount: 9, monthlyBilling: 7200000, suppliesBudgetPct: 0.07, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-02-01"), endDate: new Date("2025-01-31") },
+  { licitacionNo: "LIC-PJ-001-2024", company: "TANGO", client: "Poder Judicial - OIJ", clientType: "PUBLIC" as ClientType, officersCount: 60, positionsCount: 30, monthlyBilling: 24000000, suppliesBudgetPct: 0.10, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-01-01"), endDate: new Date("2027-12-31") },
+  { licitacionNo: "LIC-UCR-002-2023", company: "TANGO", client: "UCR - Ciudad Universitaria", clientType: "PUBLIC" as ClientType, officersCount: 30, positionsCount: 14, monthlyBilling: 11500000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-07-01"), endDate: new Date("2026-06-30") },
+  { licitacionNo: "LIC-PRIV-003-2024", company: "TANGO", client: "Almacenes El Rey", clientType: "PRIVATE" as ClientType, officersCount: 18, positionsCount: 9, monthlyBilling: 7200000, suppliesBudgetPct: 0.07, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-02-01"), endDate: new Date("2025-01-31") },
 
   // ALFA
-  { licitacionNo: "LIC-CCSS-003-2022", company: "ALFA" as CompanyName, client: "CCSS - CENDEISSS", clientType: "PUBLIC" as ClientType, officersCount: 35, positionsCount: 16, monthlyBilling: 13500000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2022-11-01"), endDate: new Date("2025-10-31") },
-  { licitacionNo: "LIC-ICE-002-2023", company: "ALFA" as CompanyName, client: "ICE - Planta Garita", clientType: "PUBLIC" as ClientType, officersCount: 40, positionsCount: 20, monthlyBilling: 16000000, suppliesBudgetPct: 0.09, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-04-01"), endDate: new Date("2026-03-31") },
-  { licitacionNo: "LIC-MUNI-001-2023", company: "ALFA" as CompanyName, client: "Municipalidad de San José", clientType: "PUBLIC" as ClientType, officersCount: 22, positionsCount: 11, monthlyBilling: 8800000, suppliesBudgetPct: 0.07, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-02-01"), endDate: new Date("2025-01-31") },
+  { licitacionNo: "LIC-CCSS-003-2022", company: "ALFA", client: "CCSS - CENDEISSS", clientType: "PUBLIC" as ClientType, officersCount: 35, positionsCount: 16, monthlyBilling: 13500000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2022-11-01"), endDate: new Date("2025-10-31") },
+  { licitacionNo: "LIC-ICE-002-2023", company: "ALFA", client: "ICE - Planta Garita", clientType: "PUBLIC" as ClientType, officersCount: 40, positionsCount: 20, monthlyBilling: 16000000, suppliesBudgetPct: 0.09, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-04-01"), endDate: new Date("2026-03-31") },
+  { licitacionNo: "LIC-MUNI-001-2023", company: "ALFA", client: "Municipalidad de San José", clientType: "PUBLIC" as ClientType, officersCount: 22, positionsCount: 11, monthlyBilling: 8800000, suppliesBudgetPct: 0.07, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-02-01"), endDate: new Date("2025-01-31") },
 
   // ALFATRONIC
-  { licitacionNo: "LIC-INA-002-2024", company: "ALFATRONIC" as CompanyName, client: "INA - Sede Alajuela", clientType: "PUBLIC" as ClientType, officersCount: 18, positionsCount: 9, monthlyBilling: 7200000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-01-01"), endDate: new Date("2026-12-31") },
-  { licitacionNo: "LIC-PRIV-004-2023", company: "ALFATRONIC" as CompanyName, client: "Corporación BCR", clientType: "PRIVATE" as ClientType, officersCount: 28, positionsCount: 14, monthlyBilling: 11200000, suppliesBudgetPct: 0.06, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-09-01"), endDate: new Date("2025-08-31") },
-  { licitacionNo: "LIC-UCR-003-2024", company: "ALFATRONIC" as CompanyName, client: "UCR - SIBDI", clientType: "PUBLIC" as ClientType, officersCount: 14, positionsCount: 7, monthlyBilling: 5600000, suppliesBudgetPct: 0.07, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-03-01"), endDate: new Date("2027-02-28") },
+  { licitacionNo: "LIC-INA-002-2024", company: "ALFATRONIC", client: "INA - Sede Alajuela", clientType: "PUBLIC" as ClientType, officersCount: 18, positionsCount: 9, monthlyBilling: 7200000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-01-01"), endDate: new Date("2026-12-31") },
+  { licitacionNo: "LIC-PRIV-004-2023", company: "ALFATRONIC", client: "Corporación BCR", clientType: "PRIVATE" as ClientType, officersCount: 28, positionsCount: 14, monthlyBilling: 11200000, suppliesBudgetPct: 0.06, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-09-01"), endDate: new Date("2025-08-31") },
+  { licitacionNo: "LIC-UCR-003-2024", company: "ALFATRONIC", client: "UCR - SIBDI", clientType: "PUBLIC" as ClientType, officersCount: 14, positionsCount: 7, monthlyBilling: 5600000, suppliesBudgetPct: 0.07, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-03-01"), endDate: new Date("2027-02-28") },
 
   // BENLO
-  { licitacionNo: "LIC-PJ-002-2023", company: "BENLO" as CompanyName, client: "Poder Judicial - TSE", clientType: "PUBLIC" as ClientType, officersCount: 42, positionsCount: 20, monthlyBilling: 16800000, suppliesBudgetPct: 0.09, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-05-01"), endDate: new Date("2026-04-30") },
-  { licitacionNo: "LIC-MUNI-002-2024", company: "BENLO" as CompanyName, client: "Municipalidad de Alajuela", clientType: "PUBLIC" as ClientType, officersCount: 16, positionsCount: 8, monthlyBilling: 6400000, suppliesBudgetPct: 0.07, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-02-01"), endDate: new Date("2026-01-31") },
+  { licitacionNo: "LIC-PJ-002-2023", company: "BENLO", client: "Poder Judicial - TSE", clientType: "PUBLIC" as ClientType, officersCount: 42, positionsCount: 20, monthlyBilling: 16800000, suppliesBudgetPct: 0.09, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-05-01"), endDate: new Date("2026-04-30") },
+  { licitacionNo: "LIC-MUNI-002-2024", company: "BENLO", client: "Municipalidad de Alajuela", clientType: "PUBLIC" as ClientType, officersCount: 16, positionsCount: 8, monthlyBilling: 6400000, suppliesBudgetPct: 0.07, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-02-01"), endDate: new Date("2026-01-31") },
 
   // BENA
-  { licitacionNo: "LIC-CCSS-004-2023", company: "BENA" as CompanyName, client: "CCSS - Área Salud Coronado", clientType: "PUBLIC" as ClientType, officersCount: 20, positionsCount: 10, monthlyBilling: 8000000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-08-01"), endDate: new Date("2026-07-31") },
-  { licitacionNo: "LIC-PRIV-005-2024", company: "BENA" as CompanyName, client: "Hipermás Cartago", clientType: "PRIVATE" as ClientType, officersCount: 10, positionsCount: 5, monthlyBilling: 4000000, suppliesBudgetPct: 0.06, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-01-01"), endDate: new Date("2024-12-31") },
+  { licitacionNo: "LIC-CCSS-004-2023", company: "BENA", client: "CCSS - Área Salud Coronado", clientType: "PUBLIC" as ClientType, officersCount: 20, positionsCount: 10, monthlyBilling: 8000000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-08-01"), endDate: new Date("2026-07-31") },
+  { licitacionNo: "LIC-PRIV-005-2024", company: "BENA", client: "Hipermás Cartago", clientType: "PRIVATE" as ClientType, officersCount: 10, positionsCount: 5, monthlyBilling: 4000000, suppliesBudgetPct: 0.06, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-01-01"), endDate: new Date("2024-12-31") },
 
   // JOBEN
-  { licitacionNo: "LIC-ICE-003-2024", company: "JOBEN" as CompanyName, client: "ICE - Proyecto Reventazón", clientType: "PUBLIC" as ClientType, officersCount: 32, positionsCount: 16, monthlyBilling: 12800000, suppliesBudgetPct: 0.10, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-04-01"), endDate: new Date("2027-03-31") },
-  { licitacionNo: "LIC-INA-003-2023", company: "JOBEN" as CompanyName, client: "INA - Sede San José", clientType: "PUBLIC" as ClientType, officersCount: 25, positionsCount: 12, monthlyBilling: 9600000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-10-01"), endDate: new Date("2026-09-30") },
+  { licitacionNo: "LIC-ICE-003-2024", company: "JOBEN", client: "ICE - Proyecto Reventazón", clientType: "PUBLIC" as ClientType, officersCount: 32, positionsCount: 16, monthlyBilling: 12800000, suppliesBudgetPct: 0.10, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-04-01"), endDate: new Date("2027-03-31") },
+  { licitacionNo: "LIC-INA-003-2023", company: "JOBEN", client: "INA - Sede San José", clientType: "PUBLIC" as ClientType, officersCount: 25, positionsCount: 12, monthlyBilling: 9600000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-10-01"), endDate: new Date("2026-09-30") },
 
   // GRUPO
-  { licitacionNo: "LIC-CCSS-005-2024", company: "GRUPO" as CompanyName, client: "CCSS - Hospital Calderón Guardia", clientType: "PUBLIC" as ClientType, officersCount: 50, positionsCount: 25, monthlyBilling: 20000000, suppliesBudgetPct: 0.09, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-01-01"), endDate: new Date("2027-12-31") },
-  { licitacionNo: "LIC-PJ-003-2023", company: "GRUPO" as CompanyName, client: "Poder Judicial - Tribunales", clientType: "PUBLIC" as ClientType, officersCount: 45, positionsCount: 22, monthlyBilling: 18000000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-06-01"), endDate: new Date("2026-05-31") },
-  { licitacionNo: "LIC-PRIV-006-2023", company: "GRUPO" as CompanyName, client: "Citi Bank Costa Rica", clientType: "PRIVATE" as ClientType, officersCount: 15, positionsCount: 7, monthlyBilling: 5600000, suppliesBudgetPct: 0.06, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-03-01"), endDate: new Date("2025-02-28") },
+  { licitacionNo: "LIC-CCSS-005-2024", company: "GRUPO", client: "CCSS - Hospital Calderón Guardia", clientType: "PUBLIC" as ClientType, officersCount: 50, positionsCount: 25, monthlyBilling: 20000000, suppliesBudgetPct: 0.09, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-01-01"), endDate: new Date("2027-12-31") },
+  { licitacionNo: "LIC-PJ-003-2023", company: "GRUPO", client: "Poder Judicial - Tribunales", clientType: "PUBLIC" as ClientType, officersCount: 45, positionsCount: 22, monthlyBilling: 18000000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-06-01"), endDate: new Date("2026-05-31") },
+  { licitacionNo: "LIC-PRIV-006-2023", company: "GRUPO", client: "Citi Bank Costa Rica", clientType: "PRIVATE" as ClientType, officersCount: 15, positionsCount: 7, monthlyBilling: 5600000, suppliesBudgetPct: 0.06, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-03-01"), endDate: new Date("2025-02-28") },
 
   // ACE
-  { licitacionNo: "LIC-ACE-001-2023", company: "ACE" as CompanyName, client: "CCSS - Hospital de Niños", clientType: "PUBLIC" as ClientType, officersCount: 30, positionsCount: 15, monthlyBilling: 12000000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-09-01"), endDate: new Date("2026-08-31") },
-  { licitacionNo: "LIC-ACE-002-2024", company: "ACE" as CompanyName, client: "UCR - CIMPA", clientType: "PUBLIC" as ClientType, officersCount: 12, positionsCount: 6, monthlyBilling: 4800000, suppliesBudgetPct: 0.07, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-02-01"), endDate: new Date("2027-01-31") },
-  { licitacionNo: "LIC-ACE-003-2023", company: "ACE" as CompanyName, client: "ICE - Edificio Central", clientType: "PUBLIC" as ClientType, officersCount: 20, positionsCount: 10, monthlyBilling: 8000000, suppliesBudgetPct: 0.09, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-07-01"), endDate: new Date("2026-06-30") },
-  { licitacionNo: "LIC-ACE-004-2022", company: "ACE" as CompanyName, client: "INA - Sede Pérez Zeledón", clientType: "PUBLIC" as ClientType, officersCount: 16, positionsCount: 8, monthlyBilling: 6400000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2022-10-01"), endDate: new Date("2025-09-30") },
-  { licitacionNo: "LIC-ACE-005-2024", company: "ACE" as CompanyName, client: "Municipalidad de Desamparados", clientType: "PUBLIC" as ClientType, officersCount: 14, positionsCount: 7, monthlyBilling: 5600000, suppliesBudgetPct: 0.07, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-05-01"), endDate: new Date("2027-04-30") },
+  { licitacionNo: "LIC-ACE-001-2023", company: "ACE", client: "CCSS - Hospital de Niños", clientType: "PUBLIC" as ClientType, officersCount: 30, positionsCount: 15, monthlyBilling: 12000000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-09-01"), endDate: new Date("2026-08-31") },
+  { licitacionNo: "LIC-ACE-002-2024", company: "ACE", client: "UCR - CIMPA", clientType: "PUBLIC" as ClientType, officersCount: 12, positionsCount: 6, monthlyBilling: 4800000, suppliesBudgetPct: 0.07, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-02-01"), endDate: new Date("2027-01-31") },
+  { licitacionNo: "LIC-ACE-003-2023", company: "ACE", client: "ICE - Edificio Central", clientType: "PUBLIC" as ClientType, officersCount: 20, positionsCount: 10, monthlyBilling: 8000000, suppliesBudgetPct: 0.09, status: "ACTIVE" as ContractStatus, startDate: new Date("2023-07-01"), endDate: new Date("2026-06-30") },
+  { licitacionNo: "LIC-ACE-004-2022", company: "ACE", client: "INA - Sede Pérez Zeledón", clientType: "PUBLIC" as ClientType, officersCount: 16, positionsCount: 8, monthlyBilling: 6400000, suppliesBudgetPct: 0.08, status: "ACTIVE" as ContractStatus, startDate: new Date("2022-10-01"), endDate: new Date("2025-09-30") },
+  { licitacionNo: "LIC-ACE-005-2024", company: "ACE", client: "Municipalidad de Desamparados", clientType: "PUBLIC" as ClientType, officersCount: 14, positionsCount: 7, monthlyBilling: 5600000, suppliesBudgetPct: 0.07, status: "ACTIVE" as ContractStatus, startDate: new Date("2024-05-01"), endDate: new Date("2027-04-30") },
   // Expired contract (for testing filters)
-  { licitacionNo: "LIC-ACE-000-2021", company: "ACE" as CompanyName, client: "MOPT - Sede Central", clientType: "PUBLIC" as ClientType, officersCount: 10, positionsCount: 5, monthlyBilling: 4000000, suppliesBudgetPct: 0.07, status: "FINISHED" as ContractStatus, startDate: new Date("2021-01-01"), endDate: new Date("2023-12-31") },
+  { licitacionNo: "LIC-ACE-000-2021", company: "ACE", client: "MOPT - Sede Central", clientType: "PUBLIC" as ClientType, officersCount: 10, positionsCount: 5, monthlyBilling: 4000000, suppliesBudgetPct: 0.07, status: "FINISHED" as ContractStatus, startDate: new Date("2021-01-01"), endDate: new Date("2023-12-31") },
 ];
 
 async function main() {
   console.log("🌱 Seeding database...");
+
+  for (const row of COMPANY_SEED_ROWS) {
+    await prisma.company.upsert({
+      where: { code: row.code },
+      update: { name: row.name, sortOrder: row.sortOrder },
+      create: { code: row.code, name: row.name, sortOrder: row.sortOrder, isActive: true },
+    });
+  }
 
   // Create admin user
   const passwordHash = await bcrypt.hash("admin123", 12);
@@ -152,7 +170,7 @@ async function main() {
 
   // Compute equivalencePct per company
   console.log("\n📊 Computing equivalence percentages...");
-  for (const company of COMPANIES) {
+  for (const company of COMPANY_CODES) {
     const contracts = await prisma.contract.findMany({
       where: { company, status: { not: "FINISHED" }, deletedAt: null },
     });

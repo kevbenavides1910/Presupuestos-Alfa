@@ -4,14 +4,14 @@ import { getSession, canManageExpenses } from "@/lib/api/middleware";
 import { ok, created, badRequest, unauthorized, forbidden, conflict, serverError } from "@/lib/api/response";
 import { adminExpenseSchema } from "@/lib/validations/expense.schema";
 import { fromMonthString } from "@/lib/utils/format";
-import { CompanyName } from "@prisma/client";
+import { requireCompanyCode } from "@/lib/server/companies";
 
 export async function GET(req: NextRequest) {
   const session = await getSession();
   if (!session) return unauthorized();
 
   const { searchParams } = new URL(req.url);
-  const company = searchParams.get("company") as CompanyName | null;
+  const company = searchParams.get("company");
   const month = searchParams.get("month");
 
   const where: Record<string, unknown> = {};
@@ -47,6 +47,9 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) return badRequest("Datos inválidos", parsed.error.flatten());
 
     const data = parsed.data;
+    const companyOk = await requireCompanyCode(prisma, data.company, { mustBeActive: true });
+    if (!companyOk.ok) return badRequest(companyOk.message);
+
     const periodMonth = fromMonthString(data.periodMonth);
 
     // Check duplicate

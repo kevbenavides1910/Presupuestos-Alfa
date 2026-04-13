@@ -34,7 +34,8 @@ export function expenseRowFromSheet(
   row: Record<string, unknown>,
   sheetRow: number,
   contractIdByLicitacion: Map<string, { id: string; company: string }>,
-  originIdByName: Map<string, string>
+  originIdByName: Map<string, string>,
+  companyCatalog: { code: string; name: string }[]
 ): { ok: true; data: ExpenseCreateInput } | { ok: false; sheetRow: number; message: string } {
   const norm = rowToNormalized(row);
 
@@ -84,7 +85,7 @@ export function expenseRowFromSheet(
 
   const companyCell = pickCell(norm, ["empresa", "company", "compania"]);
   const companyParsed = companyCell !== undefined && companyCell !== null && String(companyCell).trim() !== ""
-    ? parseCompanyCell(companyCell)
+    ? parseCompanyCell(companyCell, companyCatalog)
     : null;
   const company = companyParsed ?? (companyFromContract as ExpenseCreateInput["company"]);
   if (!company) {

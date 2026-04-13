@@ -1,4 +1,4 @@
-import type { CompanyName, ClientType, ContractStatus, ExpenseBudgetLine, UserRole } from "@prisma/client";
+import type { ClientType, ContractStatus, ExpenseBudgetLine, UserRole } from "@prisma/client";
 
 export const EXPENSE_BUDGET_LINES: ExpenseBudgetLine[] = ["LABOR", "SUPPLIES", "ADMIN", "PROFIT"];
 
@@ -26,12 +26,8 @@ export function parseReportPartida(raw: string | null): ReportPartidaFilter {
   return "ALL";
 }
 
-export const COMPANIES: CompanyName[] = [
-  "CONSORCIO", "MONITOREO", "TANGO", "ALFA",
-  "ALFATRONIC", "BENLO", "BENA", "JOBEN", "GRUPO", "ACE",
-];
-
-export const COMPANY_LABELS: Record<CompanyName, string> = {
+/** Etiquetas por defecto (p. ej. importaciones o antes de cargar el catálogo). */
+export const FALLBACK_COMPANY_LABELS: Record<string, string> = {
   CONSORCIO: "Consorcio",
   MONITOREO: "Monitoreo",
   TANGO: "Tango",
@@ -43,6 +39,15 @@ export const COMPANY_LABELS: Record<CompanyName, string> = {
   GRUPO: "Grupo",
   ACE: "ACE",
 };
+
+export function companyDisplayName(
+  code: string,
+  catalog?: { code: string; name: string }[]
+): string {
+  const fromCatalog = catalog?.find((c) => c.code === code)?.name;
+  if (fromCatalog) return fromCatalog;
+  return FALLBACK_COMPANY_LABELS[code] ?? code;
+}
 
 export const CLIENT_TYPE_LABELS: Record<ClientType, string> = {
   PUBLIC: "Pública",

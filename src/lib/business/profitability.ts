@@ -424,7 +424,7 @@ export async function getContractProfitability(
 
 export async function getCompanyProfitabilitySummary(company?: string) {
   const whereClause = company
-    ? { company: company as import("@prisma/client").CompanyName, deletedAt: null as null }
+    ? { company, deletedAt: null as null }
     : { deletedAt: null as null };
 
   const contracts = await prisma.contract.findMany({ where: whereClause });

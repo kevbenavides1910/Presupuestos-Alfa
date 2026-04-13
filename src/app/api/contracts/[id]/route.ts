@@ -6,6 +6,7 @@ import { contractUpdateSchema } from "@/lib/validations/contract.schema";
 import { recalculateEquivalence, getTotalSuppliesBudget } from "@/lib/business/equivalence";
 import { calcSuppliesBudget } from "@/lib/business/profitability";
 import { getEffectiveMonthlyBilling } from "@/lib/business/effectiveBilling";
+import { requireCompanyCode } from "@/lib/server/companies";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -77,6 +78,10 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       ...restPatch,
       ...(sp !== undefined ? { suppliesPct: sp, suppliesBudgetPct: sp } : {}),
     };
+    if (data.company !== undefined) {
+      const companyOk = await requireCompanyCode(prisma, data.company, { mustBeActive: true });
+      if (!companyOk.ok) return badRequest(companyOk.message);
+    }
     const previousData = { ...contract };
 
     const updated = await prisma.contract.update({

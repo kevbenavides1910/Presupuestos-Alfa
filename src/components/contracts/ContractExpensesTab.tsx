@@ -9,12 +9,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "@/components/ui/toaster";
 import { formatCurrency, formatMonthYear } from "@/lib/utils/format";
-import { COMPANY_LABELS } from "@/lib/utils/constants";
-import type { CompanyName, ExpenseType } from "@prisma/client";
+import { companyDisplayName } from "@/lib/utils/constants";
+import { useCompanies } from "@/lib/hooks/use-companies";
+import type { ExpenseType } from "@prisma/client";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Distribution {
-  contractId: string; licitacionNo: string; client: string; company: CompanyName;
+  contractId: string; licitacionNo: string; client: string; company: string;
   equivalencePct: number; allocatedAmount: number;
 }
 interface Expense {
@@ -78,6 +79,8 @@ export function ContractExpensesTab({
   canManageExpenses = true,
 }: Props) {
   const qc = useQueryClient();
+  const { data: companiesRes } = useCompanies();
+  const companyRows = companiesRes?.data ?? [];
   const [filterType, setFilterType] = useState(lockedType ?? "all");
   /** Empty string = todos los meses */
   const [filterMonth, setFilterMonth] = useState("");
@@ -373,7 +376,7 @@ export function ContractExpensesTab({
                             <div className="font-medium">{d.client}</div>
                             <div className="text-xs text-slate-400">{d.licitacionNo}</div>
                           </td>
-                          <td className="px-4 py-2.5 text-slate-500 text-sm">{COMPANY_LABELS[d.company]}</td>
+                          <td className="px-4 py-2.5 text-slate-500 text-sm">{companyDisplayName(d.company, companyRows)}</td>
                           <td className="px-4 py-2.5 text-right text-slate-600">{(d.equivalencePct * 100).toFixed(2)}%</td>
                           <td className="px-4 py-2.5 text-right font-semibold">{formatCurrency(d.allocatedAmount)}</td>
                         </tr>

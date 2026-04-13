@@ -2,7 +2,6 @@
 // These must stay in sync with prisma/schema.prisma
 
 export type {
-  CompanyName,
   ClientType,
   ContractStatus,
   UserRole,

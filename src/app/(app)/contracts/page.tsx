@@ -15,13 +15,14 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TrafficLightBadge } from "@/components/shared/TrafficLightBadge";
 import { formatCurrency, formatDate, daysUntilExpiry } from "@/lib/utils/format";
-import { COMPANIES, COMPANY_LABELS, CONTRACT_STATUS_LABELS, CLIENT_TYPE_LABELS } from "@/lib/utils/constants";
+import { companyDisplayName, CONTRACT_STATUS_LABELS, CLIENT_TYPE_LABELS } from "@/lib/utils/constants";
+import { useCompanies } from "@/lib/hooks/use-companies";
 import { calcTrafficLight } from "@/lib/utils/constants";
 import { canModifyContracts } from "@/lib/permissions";
-import type { CompanyName, ContractStatus, ClientType } from "@prisma/client";
+import type { ContractStatus, ClientType } from "@prisma/client";
 
 interface Contract {
-  id: string; licitacionNo: string; company: CompanyName; client: string;
+  id: string; licitacionNo: string; company: string; client: string;
   clientType: ClientType; officersCount: number; positionsCount: number;
   status: ContractStatus; startDate: string; endDate: string;
   monthlyBilling: number;
@@ -61,6 +62,8 @@ function GlobalPartidaCell({ sharePct, active }: { sharePct: number; active: boo
 export default function ContractsPage() {
   const qc = useQueryClient();
   const { data: session } = useSession();
+  const { data: companiesRes } = useCompanies();
+  const companyRows = companiesRes?.data ?? [];
   const canCreate = session?.user?.role ? canModifyContracts(session.user.role) : false;
   const contractFileRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
@@ -129,7 +132,13 @@ export default function ContractsPage() {
       fd.set("file", f);
       const res = await fetch("/api/import/contracts", { method: "POST", body: fd, credentials: "same-origin" });
       const json = (await res.json()) as {
-        data?: { created?: number; skipped?: number; errors?: { sheetRow: number; message: string }[]; message?: string };
+        data?: {
+          created?: number;
+          skipped?: number;
+          skippedExistingRows?: { sheetRow: number; licitacionNo: string }[];
+          errors?: { sheetRow: number; message: string }[];
+          message?: string;
+        };
         error?: { message?: string };
       };
       if (!res.ok) {
@@ -138,17 +147,46 @@ export default function ContractsPage() {
       }
       const d = json.data;
       const createdN = d?.created ?? 0;
+      const blockingErrors = d?.errors ?? [];
+      const skippedRows = d?.skippedExistingRows ?? [];
+
       const errLines =
-        d?.errors && d.errors.length > 0
-          ? d.errors
-              .slice(0, 12)
+        blockingErrors.length > 0
+          ? blockingErrors
+              .slice(0, 100)
               .map((e) => `Fila ${e.sheetRow}: ${e.message}`)
-              .join("\n")
+              .join("\n") + (blockingErrors.length > 100 ? `\n… y ${blockingErrors.length - 100} más.` : "")
           : "";
+
+      const skippedLines =
+        skippedRows.length > 0
+          ? skippedRows.length <= 40
+            ? skippedRows.map((s) => `Fila ${s.sheetRow}: ${s.licitacionNo}`).join("\n")
+            : `${skippedRows
+                .slice(0, 35)
+                .map((s) => `Fila ${s.sheetRow}: ${s.licitacionNo}`)
+                .join("\n")}\n… y ${skippedRows.length - 35} más (total ${skippedRows.length} omitidas).`
+          : "";
+
+      const errHint =
+        errLines !== "" || skippedLines !== ""
+          ? `\n\n— «Fila N» = fila en Excel (fila 1 = títulos). «Omitidas» no son fallo: esa licitación ya está guardada.`
+          : "";
+
+      const detailParts: string[] = [];
+      if (errLines) detailParts.push(`ERRORES — corrija en el archivo:\n${errLines}`);
+      if (skippedLines) detailParts.push(`OMITIDAS — ya existen en el sistema:\n${skippedLines}`);
+      const detailBody = detailParts.length > 0 ? `${detailParts.join("\n\n")}${errHint}` : "";
+
+      const longDetail = detailBody.length > 200;
+      const toastOpts = longDetail ? { durationMs: 90_000, copyable: true as const } : undefined;
+
       if (createdN > 0) {
-        toast.success(d?.message ?? `Se importaron ${createdN} contrato(s).`, errLines || undefined);
+        toast.success(d?.message ?? `Se importaron ${createdN} contrato(s).`, detailBody || undefined, toastOpts);
       } else if (errLines) {
-        toast.error("No se importaron contratos", errLines);
+        toast.error("No se importaron contratos nuevos", detailBody || d?.message, toastOpts);
+      } else if (skippedLines) {
+        toast.info("Importación", detailBody || d?.message || "Sin contratos nuevos.", toastOpts);
       } else {
         toast.info("Importación", d?.message ?? "Sin filas nuevas.");
       }
@@ -229,7 +267,7 @@ export default function ContractsPage() {
                 />
               </div>
               <MultiSelect
-                options={COMPANIES.map((c) => ({ value: c, label: COMPANY_LABELS[c] }))}
+                options={companyRows.map((c) => ({ value: c.code, label: c.name }))}
                 value={companies}
                 onChange={setCompanies}
                 placeholder="Todas las empresas"
@@ -323,7 +361,7 @@ export default function ContractsPage() {
                             <div className="text-xs text-slate-400">{c.officersCount} oficiales · {c.positionsCount} puestos</div>
                           </td>
                           <td className="px-4 py-3">
-                            <Badge variant="outline">{COMPANY_LABELS[c.company]}</Badge>
+                            <Badge variant="outline">{companyDisplayName(c.company, companyRows)}</Badge>
                           </td>
                           <td className="px-4 py-3 text-slate-500">{CLIENT_TYPE_LABELS[c.clientType]}</td>
                           <td className="px-4 py-3 text-right font-medium">{formatCurrency(c.monthlyBilling)}</td>

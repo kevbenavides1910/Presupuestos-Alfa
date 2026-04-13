@@ -1,12 +1,30 @@
 import * as XLSX from "xlsx";
 
-/** Primera hoja → filas como objetos usando la fila 1 como encabezados. */
-export function readFirstSheetAsObjects(buffer: ArrayBuffer): Record<string, unknown>[] {
-  const wb = XLSX.read(buffer, { type: "array", cellDates: true, raw: false });
-  const name = wb.SheetNames[0];
+export type ReadSheetOptions = {
+  /** Si existe una hoja con este nombre (sin distinguir mayúsculas), se usa en lugar de la primera. */
+  preferredName?: string;
+};
+
+function pickSheetName(sheetNames: string[], preferredName?: string): string | undefined {
+  if (preferredName) {
+    const want = preferredName.trim().toLowerCase();
+    const found = sheetNames.find((n) => n.trim().toLowerCase() === want);
+    if (found) return found;
+  }
+  return sheetNames[0];
+}
+
+/** Hoja de trabajo → filas como objetos usando la fila 1 como encabezados. */
+export function readFirstSheetAsObjects(
+  buffer: ArrayBuffer,
+  opts?: ReadSheetOptions
+): Record<string, unknown>[] {
+  // raw: true conserva números seriales y Date; raw: false suele formatear fechas a texto local que no siempre parseamos.
+  const wb = XLSX.read(buffer, { type: "array", cellDates: true, raw: true });
+  const name = pickSheetName(wb.SheetNames, opts?.preferredName);
   if (!name) return [];
   const sheet = wb.Sheets[name];
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "", raw: false });
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "", raw: true });
   return rows;
 }
 
@@ -34,7 +52,10 @@ export function pickCell(norm: Record<string, unknown>, aliases: string[]): unkn
   for (const a of aliases) {
     const key = normalizeHeaderKey(a);
     const v = norm[key];
-    if (v !== undefined && v !== null && String(v).trim() !== "") return v;
+    if (v === undefined || v === null) continue;
+    if (typeof v === "number" && !Number.isNaN(v)) return v;
+    if (v instanceof Date) return v;
+    if (String(v).trim() !== "") return v;
   }
   return undefined;
 }
@@ -136,7 +157,45 @@ export function parseNumber(v: unknown): number | null {
   return parseLocaleNumberString(s);
 }
 
-/** Fecha: serial Excel, Date, o string YYYY-MM-DD / DD/MM/YYYY */
+function excelSerialToYmd(serialWhole: number): string | null {
+  if (serialWhole < 200 || serialWhole > 200000) return null;
+  const epoch = new Date(1899, 11, 30);
+  const dt = new Date(epoch.getTime() + serialWhole * 86400000);
+  if (Number.isNaN(dt.getTime())) return null;
+  const y = dt.getFullYear();
+  if (y < 1900 || y > 2200) return null;
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const d = String(dt.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/** Mes abreviado o nombre en español (Excel regional) → "01"…"12". */
+function monthEsTokenToMm(token: string): string | null {
+  const k = token
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\./g, "")
+    .slice(0, 3);
+  const map: Record<string, string> = {
+    ene: "01",
+    feb: "02",
+    mar: "03",
+    abr: "04",
+    may: "05",
+    jun: "06",
+    jul: "07",
+    ago: "08",
+    sep: "09",
+    set: "09",
+    oct: "10",
+    nov: "11",
+    dic: "12",
+  };
+  return map[k] ?? null;
+}
+
+/** Fecha: serial Excel, Date, o string YYYY-MM-DD / D/M/YYYY (y variantes con hora). */
 export function parseDateCell(v: unknown): string | null {
   if (v === undefined || v === null || v === "") return null;
   if (v instanceof Date && !Number.isNaN(v.getTime())) {
@@ -145,21 +204,54 @@ export function parseDateCell(v: unknown): string | null {
     const d = String(v.getDate()).padStart(2, "0");
     return `${y}-${m}-${d}`;
   }
-  if (typeof v === "number" && v > 20000 && v < 60000) {
-    const epoch = new Date(1899, 11, 30);
-    const dt = new Date(epoch.getTime() + Math.round(v) * 86400000);
-    const y = dt.getFullYear();
-    const m = String(dt.getMonth() + 1).padStart(2, "0");
-    const d = String(dt.getDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
+  if (typeof v === "number" && !Number.isNaN(v)) {
+    const serial = Math.floor(Math.abs(v));
+    const ymd = excelSerialToYmd(serial);
+    if (ymd) return ymd;
   }
-  const s = String(v).trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  const m1 = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  let s = String(v)
+    .replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "")
+    .trim()
+    .replace(/[\s\u00A0\u202F]+/g, " ");
+  // Celda de fecha guardada como texto con serial (p. ej. "44927" o "44927,5" con decimal regional).
+  if (/^\d{5,7}([.,]\d+)?$/.test(s)) {
+    const n = Math.floor(Number.parseFloat(s.replace(",", ".")));
+    const ymd = excelSerialToYmd(n);
+    if (ymd) return ymd;
+  }
+  const isoHead = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (isoHead) return isoHead[1];
+  // "4/1/2023 0:00:00", "4/1/202312:00:00 a. m.", etc.
+  const datePart = s.split(/\s+/)[0].split("T")[0];
+  if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return datePart;
+  const m1 = datePart.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
   if (m1) {
     const dd = m1[1].padStart(2, "0");
     const mm = m1[2].padStart(2, "0");
     return `${m1[3]}-${mm}-${dd}`;
+  }
+  const m2 = datePart.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2})$/);
+  if (m2) {
+    let yy = Number.parseInt(m2[3], 10);
+    yy += yy >= 70 ? 1900 : 2000;
+    const dd = m2[1].padStart(2, "0");
+    const mm = m2[2].padStart(2, "0");
+    return `${yy}-${mm}-${dd}`;
+  }
+  // 4-ene-2023, 04/ene/2024, 1-ene-25 (mes en letras, típico de Excel en español)
+  const m3 = datePart.match(
+    /^(\d{1,2})[\/\-.]([a-zA-Z\u00f1\u00d1\u00fc\u00dc\u00e1\u00e9\u00ed\u00f3\u00fa\u00c1\u00c9\u00cd\u00d3\u00da.]+)[\/\-.](\d{4}|\d{2})$/i
+  );
+  if (m3) {
+    const mm = monthEsTokenToMm(m3[2]);
+    if (mm) {
+      let yy = Number.parseInt(m3[3], 10);
+      if (m3[3].length === 2) yy += yy >= 70 ? 1900 : 2000;
+      if (yy >= 1900 && yy <= 2200) {
+        const dd = m3[1].padStart(2, "0");
+        return `${yy}-${mm}-${dd}`;
+      }
+    }
   }
   return null;
 }

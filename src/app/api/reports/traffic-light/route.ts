@@ -6,14 +6,12 @@ import { getContractProfitability } from "@/lib/business/profitability";
 import { fromMonthString } from "@/lib/utils/format";
 import { autoExpireContracts } from "@/lib/business/autoExpire";
 import { nowServer } from "@/lib/utils/time";
-import { CompanyName } from "@prisma/client";
-
 export async function GET(req: NextRequest) {
   const session = await getSession();
   if (!session) return unauthorized();
 
   const { searchParams } = new URL(req.url);
-  const company = searchParams.get("company") as CompanyName | null;
+  const company = searchParams.get("company");
   const month = searchParams.get("month");
 
   const where: Record<string, unknown> = {

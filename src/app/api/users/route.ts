@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession, isAdmin } from "@/lib/api/middleware";
 import { ok, created, badRequest, unauthorized, forbidden, conflict, serverError } from "@/lib/api/response";
 import { listUsersForAdmin } from "@/lib/server/list-users";
+import { requireCompanyCode } from "@/lib/server/companies";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 
@@ -40,6 +41,11 @@ export async function POST(req: NextRequest) {
 
     const { name, email, password, role, company } = parsed.data;
 
+    if (company) {
+      const companyOk = await requireCompanyCode(prisma, company, { mustBeActive: true });
+      if (!companyOk.ok) return badRequest(companyOk.message);
+    }
+
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) return conflict("Ya existe un usuario con ese email");
 
@@ -51,7 +57,7 @@ export async function POST(req: NextRequest) {
         email,
         passwordHash,
         role: role as never,
-        company: (company || null) as never,
+        company: company || null,
         isActive: true,
       },
       select: { id: true, name: true, email: true, role: true, company: true, isActive: true, createdAt: true },

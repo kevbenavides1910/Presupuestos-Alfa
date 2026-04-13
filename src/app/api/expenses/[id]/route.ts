@@ -3,14 +3,14 @@ import { prisma } from "@/lib/prisma";
 import { getSession, canManageExpenses } from "@/lib/api/middleware";
 import { ok, badRequest, unauthorized, forbidden, notFound, serverError } from "@/lib/api/response";
 import { z } from "zod";
-import type { CompanyName, ExpenseBudgetLine, ExpenseType } from "@prisma/client";
+import type { ExpenseBudgetLine, ExpenseType } from "@prisma/client";
+import { companyCodeSchema } from "@/lib/validations/company-code";
+import { requireCompanyCode } from "@/lib/server/companies";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 const EXPENSE_TYPES = ["APERTURA", "UNIFORMS", "AUDIT", "ADMIN", "TRANSPORT", "FUEL", "PHONES", "PLANILLA", "OTHER"] as const;
 const BUDGET_LINES = ["LABOR", "SUPPLIES", "ADMIN", "PROFIT"] as const;
-const COMPANY_VALUES = ["CONSORCIO", "MONITOREO", "TANGO", "ALFA", "ALFATRONIC", "BENLO", "BENA", "JOBEN", "GRUPO", "ACE"] as const;
-
 const patchExpenseSchema = z
   .object({
     type: z.enum(EXPENSE_TYPES).optional(),
@@ -19,7 +19,7 @@ const patchExpenseSchema = z
     originId: z.string().nullable().optional(),
     referenceNumber: z.string().nullable().optional(),
     notes: z.string().nullable().optional(),
-    company: z.enum(COMPANY_VALUES).nullable().optional(),
+    company: companyCodeSchema.nullable().optional(),
   })
   .refine(
     (d) =>
@@ -58,6 +58,10 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     if (!parsed.success) return badRequest("Datos inválidos", parsed.error.flatten());
 
     const p = parsed.data;
+    if (p.company !== undefined && p.company !== null) {
+      const chk = await requireCompanyCode(prisma, p.company, { mustBeActive: true });
+      if (!chk.ok) return badRequest(chk.message);
+    }
     const data: {
       type?: ExpenseType;
       budgetLine?: ExpenseBudgetLine | null;
@@ -65,7 +69,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       originId?: string | null;
       referenceNumber?: string | null;
       notes?: string | null;
-      company?: CompanyName | null;
+      company?: string | null;
     } = {};
     if (p.type !== undefined) data.type = p.type;
     if (p.budgetLine !== undefined) data.budgetLine = p.budgetLine;

@@ -1,12 +1,12 @@
 import type { Session } from "next-auth";
-import type { CompanyName, ExpenseType } from "@prisma/client";
+import type { ExpenseType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 export type ListExpensesOptions = {
   page?: number;
   pageSize?: number;
   contractId?: string | null;
-  company?: CompanyName | null;
+  company?: string | null;
   type?: ExpenseType | null;
 };
 

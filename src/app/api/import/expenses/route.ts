@@ -9,7 +9,6 @@ import {
   isEmptyExpenseRow,
 } from "@/lib/import/expense-rows";
 import { expenseImportTemplateBuffer } from "@/lib/import/templates";
-import type { CompanyName } from "@prisma/client";
 import type { ExpenseCreateInput } from "@/lib/validations/expense.schema";
 
 function rowErrorMessage(e: unknown): string {
@@ -60,7 +59,12 @@ export async function POST(req: NextRequest) {
     }
 
     const ab = await file.arrayBuffer();
-    const rows = readFirstSheetAsObjects(ab);
+    const rows = readFirstSheetAsObjects(ab, { preferredName: "Gastos" });
+
+    const companyCatalog = await prisma.company.findMany({
+      select: { code: true, name: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    });
 
     const origins = await prisma.expenseOrigin.findMany({ select: { id: true, name: true } });
     const originIdByName = new Map<string, string>();
@@ -78,7 +82,7 @@ export async function POST(req: NextRequest) {
             select: { id: true, licitacionNo: true, company: true },
           })
         : [];
-    const contractIdByLicitacion = new Map<string, { id: string; company: CompanyName }>();
+    const contractIdByLicitacion = new Map<string, { id: string; company: string }>();
     for (const c of contracts) {
       contractIdByLicitacion.set(c.licitacionNo.trim(), { id: c.id, company: c.company });
     }
@@ -92,7 +96,7 @@ export async function POST(req: NextRequest) {
         sheetRow++;
         continue;
       }
-      const result = expenseRowFromSheet(row, sheetRow, contractIdByLicitacion, originIdByName);
+      const result = expenseRowFromSheet(row, sheetRow, contractIdByLicitacion, originIdByName, companyCatalog);
       if (!result.ok) {
         errors.push({ sheetRow: result.sheetRow, message: result.message });
       } else {

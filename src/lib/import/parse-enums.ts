@@ -1,5 +1,4 @@
-import type { ClientType, CompanyName, ContractStatus, ExpenseBudgetLine, ExpenseType } from "@prisma/client";
-import { COMPANIES, COMPANY_LABELS } from "@/lib/utils/constants";
+import type { ClientType, ContractStatus, ExpenseBudgetLine, ExpenseType } from "@prisma/client";
 
 const NORM = (s: string) =>
   s
@@ -9,13 +8,16 @@ const NORM = (s: string) =>
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, "_");
 
-export function parseCompanyCell(v: unknown): CompanyName | null {
+export function parseCompanyCell(
+  v: unknown,
+  catalog: { code: string; name: string }[]
+): string | null {
   if (v === undefined || v === null || v === "") return null;
   const raw = String(v).trim();
   const n = NORM(raw);
-  for (const c of COMPANIES) {
-    if (c === raw || NORM(c) === n) return c;
-    if (NORM(COMPANY_LABELS[c]) === n) return c;
+  for (const { code, name } of catalog) {
+    if (code === raw || NORM(code) === n) return code;
+    if (NORM(name) === n) return code;
   }
   return null;
 }

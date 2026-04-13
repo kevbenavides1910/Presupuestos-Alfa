@@ -5,7 +5,7 @@ import { ok, unauthorized, serverError } from "@/lib/api/response";
 import { getContractProfitability, mergeLegacyForReportPartida } from "@/lib/business/profitability";
 import { parseReportPartida, type ReportPartidaFilter } from "@/lib/utils/constants";
 import { fromMonthString } from "@/lib/utils/format";
-import { CompanyName, ContractStatus } from "@prisma/client";
+import { ContractStatus } from "@prisma/client";
 
 const DEFERRED_LEGACY_TYPE = "DEFERRED_LEGACY" as const;
 
@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
   if (!session) return unauthorized();
 
   const { searchParams } = new URL(req.url);
-  const company = searchParams.get("company") as CompanyName | null;
+  const company = searchParams.get("company");
   const month = searchParams.get("month");
   const partida: ReportPartidaFilter = parseReportPartida(searchParams.get("partida"));
 

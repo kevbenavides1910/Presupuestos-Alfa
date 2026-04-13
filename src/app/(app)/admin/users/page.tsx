@@ -11,9 +11,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "@/components/ui/toaster";
-import { COMPANIES, COMPANY_LABELS, USER_ROLE_LABELS } from "@/lib/utils/constants";
+import { companyDisplayName, USER_ROLE_LABELS } from "@/lib/utils/constants";
+import { useCompanies } from "@/lib/hooks/use-companies";
 import { isAdmin } from "@/lib/permissions";
-import type { CompanyName, UserRole } from "@prisma/client";
+import type { UserRole } from "@prisma/client";
 
 const ROLE_COLORS: Record<UserRole, string> = {
   ADMIN: "destructive",
@@ -25,7 +26,7 @@ const ROLE_COLORS: Record<UserRole, string> = {
 
 interface User {
   id: string; name: string; email: string; role: UserRole;
-  company: CompanyName | null; isActive: boolean; createdAt: string;
+  company: string | null; isActive: boolean; createdAt: string;
 }
 
 interface UserForm {
@@ -83,6 +84,9 @@ function sortUsersList(list: User[]): User[] {
 export default function UsersPage() {
   const { data: session, status } = useSession();
   const queryClient = useQueryClient();
+  const { data: companiesRes } = useCompanies();
+  const companyRows = companiesRes?.data ?? [];
+  const activeCompanies = companyRows.filter((c) => c.isActive);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<User | null>(null);
   const [form, setForm] = useState<UserForm>(emptyForm);
@@ -265,7 +269,7 @@ export default function UsersPage() {
                           <Badge variant={ROLE_COLORS[u.role] as never}>{USER_ROLE_LABELS[u.role]}</Badge>
                         </td>
                         <td className="px-4 py-3 text-slate-500">
-                          {u.company ? COMPANY_LABELS[u.company] : <span className="text-slate-300">Todas</span>}
+                          {u.company ? companyDisplayName(u.company, companyRows) : <span className="text-slate-300">Todas</span>}
                         </td>
                         <td className="px-4 py-3">
                           <Badge variant={u.isActive ? "success" : "secondary"}>
@@ -336,7 +340,9 @@ export default function UsersPage() {
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="ALL">Todas</SelectItem>
-                      {COMPANIES.map((c) => <SelectItem key={c} value={c}>{COMPANY_LABELS[c]}</SelectItem>)}
+                      {activeCompanies.map((c) => (
+                        <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>

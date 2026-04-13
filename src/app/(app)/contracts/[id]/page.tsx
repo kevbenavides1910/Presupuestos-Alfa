@@ -18,17 +18,18 @@ import { TrafficLightBadge } from "@/components/shared/TrafficLightBadge";
 import { MetricCard } from "@/components/shared/MetricCard";
 import { toast } from "@/components/ui/toaster";
 import { formatCurrency, formatDate, formatPct, formatMonthYear } from "@/lib/utils/format";
-import { COMPANY_LABELS, CLIENT_TYPE_LABELS, CONTRACT_STATUS_LABELS, TrafficLight, calcTrafficLight } from "@/lib/utils/constants";
+import { companyDisplayName, CLIENT_TYPE_LABELS, CONTRACT_STATUS_LABELS, TrafficLight, calcTrafficLight } from "@/lib/utils/constants";
+import { useCompanies } from "@/lib/hooks/use-companies";
 // calcTrafficLight used in BudgetBar lifetime section
 import { PeriodsTab } from "@/components/contracts/PeriodsTab";
 import { PositionsTab } from "@/components/contracts/PositionsTab";
 import { BillingHistoryTab } from "@/components/contracts/BillingHistoryTab";
 import { ContractExpensesTab } from "@/components/contracts/ContractExpensesTab";
 import { canModifyContracts, canManageExpenses, isAdmin } from "@/lib/permissions";
-import type { CompanyName, ContractStatus, ClientType } from "@prisma/client";
+import type { ContractStatus, ClientType } from "@prisma/client";
 
 interface Contract {
-  id: string; licitacionNo: string; company: CompanyName; client: string;
+  id: string; licitacionNo: string; company: string; client: string;
   clientType: ClientType; officersCount: number; positionsCount: number;
   status: ContractStatus; startDate: string; endDate: string;
   baseMonthlyBilling: number;
@@ -63,6 +64,9 @@ export default function ContractDetailPage() {
   const canEditContract = role ? canModifyContracts(role) : false;
   const canEditExpenses = role ? canManageExpenses(role) : false;
   const canDeleteContract = role ? isAdmin(role) : false;
+
+  const { data: companiesRes } = useCompanies();
+  const companyRows = companiesRes?.data ?? [];
 
   const { data: contractData, isLoading } = useQuery<{ data: Contract }>({
     queryKey: ["contract", id],
@@ -118,7 +122,7 @@ export default function ContractDetailPage() {
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-bold text-slate-900">{contract.licitacionNo}</h1>
               <Badge variant={statusColors[contract.status]}>{CONTRACT_STATUS_LABELS[contract.status]}</Badge>
-              <Badge variant="outline">{COMPANY_LABELS[contract.company]}</Badge>
+              <Badge variant="outline">{companyDisplayName(contract.company, companyRows)}</Badge>
               {prof && <TrafficLightBadge light={tl} pct={prof.budgetUsagePctFormatted} />}
             </div>
             <p className="text-slate-500 mt-1">{contract.client} · {CLIENT_TYPE_LABELS[contract.clientType]}</p>
@@ -405,7 +409,7 @@ export default function ContractDetailPage() {
                   <CardContent className="space-y-3 text-sm">
                     {[
                       { label: "N° Licitación", value: contract.licitacionNo },
-                      { label: "Empresa", value: COMPANY_LABELS[contract.company] },
+                      { label: "Empresa", value: companyDisplayName(contract.company, companyRows) },
                       { label: "Cliente", value: contract.client },
                       { label: "Tipo", value: CLIENT_TYPE_LABELS[contract.clientType] },
                       { label: "Equivalencia", value: formatPct(contract.equivalencePct) },

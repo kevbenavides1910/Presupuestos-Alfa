@@ -44,7 +44,11 @@ export async function POST(req: NextRequest) {
     }
 
     const ab = await file.arrayBuffer();
-    const rows = readFirstSheetAsObjects(ab);
+    const rows = readFirstSheetAsObjects(ab, { preferredName: "Contratos" });
+    const companyCatalog = await prisma.company.findMany({
+      select: { code: true, name: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    });
     const parsedRows: { sheetRow: number; data: ContractCreateInput }[] = [];
     const errors: { sheetRow: number; message: string }[] = [];
     const seenLicit = new Set<string>();
@@ -55,7 +59,7 @@ export async function POST(req: NextRequest) {
         sheetRow++;
         continue;
       }
-      const result = contractRowFromSheet(row, sheetRow);
+      const result = contractRowFromSheet(row, sheetRow, companyCatalog);
       if (!result.ok) {
         errors.push({ sheetRow: result.sheetRow, message: result.message });
         sheetRow++;
@@ -86,9 +90,10 @@ export async function POST(req: NextRequest) {
     const existingSet = new Set(existing.map((e) => e.licitacionNo));
     const toCreate = parsedRows.filter((p) => !existingSet.has(p.data.licitacionNo));
     const skippedExisting = parsedRows.filter((p) => existingSet.has(p.data.licitacionNo));
-    for (const p of skippedExisting) {
-      errors.push({ sheetRow: p.sheetRow, message: `Ya existe un contrato con licitación ${p.data.licitacionNo}` });
-    }
+    const skippedExistingRows = skippedExisting.map((p) => ({
+      sheetRow: p.sheetRow,
+      licitacionNo: p.data.licitacionNo,
+    }));
 
     let createdCount = 0;
     for (const { sheetRow, data } of toCreate) {
@@ -125,22 +130,24 @@ export async function POST(req: NextRequest) {
       await recalculateEquivalence();
     }
 
-    const partialMsg =
-      createdCount > 0 && errors.length > 0
-        ? `Importación parcial: ${createdCount} contrato(s) creados; ${errors.length} fila(s) con aviso o error.`
-        : null;
+    const summaryParts: string[] = [];
+    if (createdCount > 0) summaryParts.push(`${createdCount} contrato(s) nuevo(s)`);
+    if (skippedExisting.length > 0) {
+      summaryParts.push(`${skippedExisting.length} fila(s) omitida(s) — esa licitación ya está en el sistema`);
+    }
+    if (errors.length > 0) summaryParts.push(`${errors.length} fila(s) con error — revise el Excel`);
+
+    const message =
+      summaryParts.length > 0
+        ? `Importación: ${summaryParts.join(". ")}.`
+        : "Nada que importar.";
 
     return created({
       created: createdCount,
       skipped: skippedExisting.length,
+      skippedExistingRows,
       errors,
-      message:
-        partialMsg ??
-        (createdCount > 0
-          ? `Se importaron ${createdCount} contrato(s).`
-          : skippedExisting.length > 0 || errors.length > 0
-            ? "No se crearon contratos nuevos; revise los errores."
-            : "Nada que importar."),
+      message,
     });
   } catch (e) {
     return serverError("Error al importar contratos", e);

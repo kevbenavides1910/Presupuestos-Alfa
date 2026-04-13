@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import * as ToastPrimitives from "@radix-ui/react-toast";
-import { X } from "lucide-react";
+import { Copy, X } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 
 const ToastProvider = ToastPrimitives.Provider;
@@ -72,28 +72,84 @@ const ToastDescription = React.forwardRef<
 ToastDescription.displayName = ToastPrimitives.Description.displayName;
 
 // Simple in-memory toast state
-type ToastData = { id: string; title?: string; description?: string; variant?: "default" | "destructive" | "success" };
+type ToastData = {
+  id: string;
+  title?: string;
+  description?: string;
+  variant?: "default" | "destructive" | "success";
+  durationMs?: number;
+  /** Muestra «Copiar detalle» para pegar el texto en otro sitio (p. ej. errores de importación). */
+  copyable?: boolean;
+};
 let toasts: ToastData[] = [];
 let listeners: Array<(t: ToastData[]) => void> = [];
 
 function notify(d: Omit<ToastData, "id">) {
+  const defaultMs =
+    d.copyable && d.description && d.description.length > 80 ? 90_000 : 4000;
+  const durationMs = d.durationMs ?? defaultMs;
   const t = { ...d, id: Math.random().toString(36).slice(2) };
   toasts = [...toasts, t];
   listeners.forEach((l) => l(toasts));
   setTimeout(() => {
     toasts = toasts.filter((x) => x.id !== t.id);
     listeners.forEach((l) => l(toasts));
-  }, 4000);
+  }, durationMs);
 }
 
+export type ToastOptions = { durationMs?: number; copyable?: boolean };
+
 export const toast = {
-  success: (title: string, description?: string) => notify({ title, description, variant: "success" }),
-  error: (title: string, description?: string) => notify({ title, description, variant: "destructive" }),
-  info: (title: string, description?: string) => notify({ title, description, variant: "default" }),
+  success: (title: string, description?: string, opts?: ToastOptions) =>
+    notify({
+      title,
+      description,
+      variant: "success",
+      durationMs: opts?.durationMs,
+      copyable: opts?.copyable,
+    }),
+  error: (title: string, description?: string, opts?: ToastOptions) =>
+    notify({
+      title,
+      description,
+      variant: "destructive",
+      durationMs: opts?.durationMs,
+      copyable: opts?.copyable,
+    }),
+  info: (title: string, description?: string, opts?: ToastOptions) =>
+    notify({
+      title,
+      description,
+      variant: "default",
+      durationMs: opts?.durationMs,
+      copyable: opts?.copyable,
+    }),
 };
+
+async function copyToastText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
 
 export function Toaster() {
   const [items, setItems] = React.useState<ToastData[]>([]);
+  const [copiedId, setCopiedId] = React.useState<string | null>(null);
   React.useEffect(() => {
     listeners.push(setItems);
     return () => { listeners = listeners.filter((l) => l !== setItems); };
@@ -102,10 +158,44 @@ export function Toaster() {
   return (
     <ToastProvider>
       {items.map((t) => (
-        <Toast key={t.id} variant={t.variant}>
-          <div className="grid gap-1">
+        <Toast key={t.id} variant={t.variant} className="items-start">
+          <div className="grid min-w-0 flex-1 gap-2 pr-6">
             {t.title && <ToastTitle>{t.title}</ToastTitle>}
-            {t.description && <ToastDescription>{t.description}</ToastDescription>}
+            {t.description && (
+              <>
+                <ToastDescription
+                  asChild
+                  className="max-h-[min(50vh,320px)] overflow-y-auto whitespace-pre-line break-words select-text cursor-text text-left"
+                >
+                  <div>{t.description}</div>
+                </ToastDescription>
+                {t.copyable ? (
+                  <button
+                    type="button"
+                    className={cn(
+                      "inline-flex w-fit items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+                      t.variant === "destructive" &&
+                        "border-white/40 bg-white/10 hover:bg-white/20",
+                      t.variant === "success" &&
+                        "border-green-700/40 bg-green-100/80 hover:bg-green-100",
+                      t.variant !== "destructive" &&
+                        t.variant !== "success" &&
+                        "border-border bg-muted/50 hover:bg-muted"
+                    )}
+                    onClick={async () => {
+                      const ok = await copyToastText(t.description ?? "");
+                      if (ok) {
+                        setCopiedId(t.id);
+                        window.setTimeout(() => setCopiedId((id) => (id === t.id ? null : id)), 2000);
+                      }
+                    }}
+                  >
+                    <Copy className="h-3.5 w-3.5 shrink-0" />
+                    {copiedId === t.id ? "Copiado" : "Copiar detalle"}
+                  </button>
+                ) : null}
+              </>
+            )}
           </div>
           <ToastClose />
         </Toast>

@@ -16,7 +16,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { toast } from "@/components/ui/toaster";
 import { deferredExpenseSchema, type DeferredExpenseInput } from "@/lib/validations/expense.schema";
 import { formatCurrency, formatDate, formatMonthYear, fromMonthString, toMonthString } from "@/lib/utils/format";
-import { COMPANIES, COMPANY_LABELS, EXPENSE_CATEGORY_LABELS } from "@/lib/utils/constants";
+import { companyDisplayName, EXPENSE_CATEGORY_LABELS } from "@/lib/utils/constants";
+import { useCompanies } from "@/lib/hooks/use-companies";
 
 interface DeferredExpense {
   id: string; company: string; description: string; category: string;
@@ -34,6 +35,9 @@ export default function DeferredExpensesPage() {
   const [previewExpenseId, setPreviewExpenseId] = useState<string | null>(null);
   const [selectedCompany, setSelectedCompany] = useState("all");
   const queryClient = useQueryClient();
+  const { data: companiesRes } = useCompanies();
+  const companyRows = companiesRes?.data ?? [];
+  const activeCompanies = companyRows.filter((c) => c.isActive);
 
   const params = selectedCompany !== "all" ? `?company=${selectedCompany}` : "";
 
@@ -107,8 +111,8 @@ export default function DeferredExpensesPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todas las empresas</SelectItem>
-                {COMPANIES.map((c) => (
-                  <SelectItem key={c} value={c}>{COMPANY_LABELS[c]}</SelectItem>
+                {companyRows.map((c) => (
+                  <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -142,7 +146,7 @@ export default function DeferredExpensesPage() {
                         <div className="font-medium">{e.description}</div>
                       </td>
                       <td className="px-4 py-3">
-                        <Badge variant="outline">{COMPANY_LABELS[e.company as keyof typeof COMPANY_LABELS]}</Badge>
+                        <Badge variant="outline">{companyDisplayName(e.company, companyRows)}</Badge>
                       </td>
                       <td className="px-4 py-3 text-slate-500">
                         {EXPENSE_CATEGORY_LABELS[e.category as keyof typeof EXPENSE_CATEGORY_LABELS]}
@@ -201,7 +205,7 @@ export default function DeferredExpensesPage() {
               <Select onValueChange={(v) => setValue("company", v as never)}>
                 <SelectTrigger><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
                 <SelectContent>
-                  {COMPANIES.map((c) => <SelectItem key={c} value={c}>{COMPANY_LABELS[c]}</SelectItem>)}
+                  {activeCompanies.map((c) => <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>)}
                 </SelectContent>
               </Select>
               {errors.company && <p className="text-xs text-red-600">{errors.company.message}</p>}

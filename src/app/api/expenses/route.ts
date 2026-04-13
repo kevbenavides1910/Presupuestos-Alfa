@@ -1,10 +1,11 @@
 import { NextRequest } from "next/server";
-import { Prisma, CompanyName, ExpenseType } from "@prisma/client";
+import { Prisma, ExpenseType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getSession, canManageExpenses } from "@/lib/api/middleware";
 import { listExpensesForSession } from "@/lib/server/expenses-list";
 import { ok, created, badRequest, unauthorized, forbidden, serverError } from "@/lib/api/response";
 import { expenseCreateSchema } from "@/lib/validations/expense.schema";
+import { requireCompanyCode } from "@/lib/server/companies";
 
 function prismaErrorHint(err: unknown): string | null {
   const msg = err instanceof Error ? err.message : String(err);
@@ -46,7 +47,7 @@ export async function GET(req: NextRequest) {
     const contractId     = searchParams.get("contractId");
     const distributedTo  = searchParams.get("distributedTo"); // deferred expenses distributed to a contract
     const isDeferredParam = searchParams.get("isDeferred");
-    const company = searchParams.get("company") as CompanyName | null;
+    const company = searchParams.get("company");
     const type = searchParams.get("type") as ExpenseType | null;
     const page = parseInt(searchParams.get("page") ?? "1");
     const pageSize = parseInt(searchParams.get("pageSize") ?? "50");
@@ -116,6 +117,9 @@ export async function POST(req: NextRequest) {
       isDeferred,
       notes,
     } = parsed.data;
+
+    const companyOk = await requireCompanyCode(prisma, company, { mustBeActive: true });
+    if (!companyOk.ok) return badRequest(companyOk.message);
 
     const spreadMonths = isDeferred ? 1 : rawSpread;
     const [year, month] = periodMonth.split("-").map(Number);

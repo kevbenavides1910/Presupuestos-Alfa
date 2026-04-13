@@ -16,7 +16,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { toast } from "@/components/ui/toaster";
 import { adminExpenseSchema, type AdminExpenseInput } from "@/lib/validations/expense.schema";
 import { formatCurrency, formatMonthYear, toMonthString } from "@/lib/utils/format";
-import { COMPANIES, COMPANY_LABELS } from "@/lib/utils/constants";
+import { companyDisplayName } from "@/lib/utils/constants";
+import { useCompanies } from "@/lib/hooks/use-companies";
 
 interface AdminExpense {
   id: string; company: string; periodMonth: string; transport: number;
@@ -37,6 +38,9 @@ export default function AdminExpensesPage() {
   const [open, setOpen] = useState(false);
   const [selectedCompany, setSelectedCompany] = useState("all");
   const queryClient = useQueryClient();
+  const { data: companiesRes } = useCompanies();
+  const companyRows = companiesRes?.data ?? [];
+  const activeCompanies = companyRows.filter((c) => c.isActive);
 
   const params = selectedCompany !== "all" ? `?company=${selectedCompany}` : "";
   const { data, isLoading } = useQuery<{ data: AdminExpense[] }>({
@@ -101,7 +105,7 @@ export default function AdminExpensesPage() {
               <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todas las empresas</SelectItem>
-                {COMPANIES.map((c) => <SelectItem key={c} value={c}>{COMPANY_LABELS[c]}</SelectItem>)}
+                {companyRows.map((c) => <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>)}
               </SelectContent>
             </Select>
           </CardContent>
@@ -131,7 +135,7 @@ export default function AdminExpensesPage() {
                   {expenses.map((e) => (
                     <tr key={e.id} className="hover:bg-slate-50">
                       <td className="px-4 py-3">
-                        <Badge variant="outline">{COMPANY_LABELS[e.company as keyof typeof COMPANY_LABELS]}</Badge>
+                        <Badge variant="outline">{companyDisplayName(e.company, companyRows)}</Badge>
                       </td>
                       <td className="px-4 py-3 capitalize text-slate-500">{formatMonthYear(e.periodMonth)}</td>
                       <td className="px-4 py-3 text-right">{formatCurrency(e.transport)}</td>
@@ -181,7 +185,7 @@ export default function AdminExpensesPage() {
                 <Select onValueChange={(v) => setValue("company", v as never)}>
                   <SelectTrigger><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
                   <SelectContent>
-                    {COMPANIES.map((c) => <SelectItem key={c} value={c}>{COMPANY_LABELS[c]}</SelectItem>)}
+                    {activeCompanies.map((c) => <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 {errors.company && <p className="text-xs text-red-600">{errors.company.message}</p>}

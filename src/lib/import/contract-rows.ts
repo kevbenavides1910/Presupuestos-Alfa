@@ -53,7 +53,8 @@ function distributionFromImport(
 /** Fila Excel (objeto con cabeceras) → entrada create contrato. `sheetRow` = número de fila en hoja (1 = encabezado). */
 export function contractRowFromSheet(
   row: Record<string, unknown>,
-  sheetRow: number
+  sheetRow: number,
+  companyCatalog: { code: string; name: string }[]
 ): { ok: true; data: ContractCreateInput } | { ok: false; sheetRow: number; message: string } {
   const norm = rowToNormalized(row);
 
@@ -64,7 +65,7 @@ export function contractRowFromSheet(
     return { ok: false, sheetRow, message: "Falta número de licitación" };
   }
 
-  const company = parseCompanyCell(pickCell(norm, ["empresa", "company", "compania"]));
+  const company = parseCompanyCell(pickCell(norm, ["empresa", "company", "compania"]), companyCatalog);
   if (!company) {
     return { ok: false, sheetRow, message: "Empresa inválida o vacía" };
   }
@@ -77,15 +78,40 @@ export function contractRowFromSheet(
 
   const officersParsed = parseIntCell(pickCell(norm, ["oficiales", "officers_count", "oficiales_count"]));
   const positionsParsed = parseIntCell(pickCell(norm, ["puestos", "positions_count", "puestos_count"]));
-  const startRaw = pickCell(norm, ["fecha_inicio", "inicio", "start_date", "fecha_de_inicio"]);
-  const endRaw = pickCell(norm, ["fecha_fin", "fin", "end_date", "fecha_de_cierre", "cierre"]);
+  const startRaw = pickCell(norm, [
+    "fecha_inicio",
+    "inicio",
+    "start_date",
+    "fecha_de_inicio",
+    "fecha_inicial",
+    "inicio_contrato",
+    "fecha_inicio_contrato",
+  ]);
+  const endRaw = pickCell(norm, [
+    "fecha_fin",
+    "fin",
+    "end_date",
+    "fecha_de_cierre",
+    "cierre",
+    "fecha_final",
+    "fin_contrato",
+    "fecha_fin_contrato",
+  ]);
   const startDate = parseDateCell(startRaw);
   const endDate = parseDateCell(endRaw);
   if (!startDate) {
-    return { ok: false, sheetRow, message: "Fecha de inicio inválida o vacía" };
+    const hint =
+      startRaw !== undefined && startRaw !== null && String(startRaw).trim() !== ""
+        ? ` (valor: «${String(startRaw).slice(0, 60)}»)`
+        : "";
+    return { ok: false, sheetRow, message: `Fecha de inicio inválida o vacía${hint}` };
   }
   if (!endDate) {
-    return { ok: false, sheetRow, message: "Fecha de cierre inválida o vacía" };
+    const hint =
+      endRaw !== undefined && endRaw !== null && String(endRaw).trim() !== ""
+        ? ` (valor: «${String(endRaw).slice(0, 60)}»)`
+        : "";
+    return { ok: false, sheetRow, message: `Fecha de cierre inválida o vacía${hint}` };
   }
 
   const monthlyBilling = parseNumber(pickCell(norm, ["facturacion_mensual", "monthly_billing", "facturacion"]));

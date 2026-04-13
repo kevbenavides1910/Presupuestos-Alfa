@@ -15,17 +15,18 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "@/components/ui/toaster";
 import { formatCurrency, formatMonthYear } from "@/lib/utils/format";
-import { COMPANIES, COMPANY_LABELS, EXPENSE_BUDGET_LINES, EXPENSE_BUDGET_LINE_LABELS } from "@/lib/utils/constants";
+import { companyDisplayName, EXPENSE_BUDGET_LINES, EXPENSE_BUDGET_LINE_LABELS } from "@/lib/utils/constants";
+import { useCompanies } from "@/lib/hooks/use-companies";
 import { canManageExpenses as userCanManageExpenses } from "@/lib/permissions";
-import type { CompanyName, ExpenseBudgetLine, ExpenseType } from "@prisma/client";
+import type { ExpenseBudgetLine, ExpenseType } from "@prisma/client";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Contract {
-  id: string; licitacionNo: string; client: string; company: CompanyName;
+  id: string; licitacionNo: string; client: string; company: string;
   status: string; endDate: string;
 }
 interface Distribution {
-  contractId: string; licitacionNo: string; client: string; company: CompanyName;
+  contractId: string; licitacionNo: string; client: string; company: string;
   equivalencePct: number; allocatedAmount: number;
 }
 interface ExpenseOrigin { id: string; name: string; isActive: boolean; sortOrder: number; }
@@ -34,8 +35,8 @@ interface Expense {
   description: string; amount: number;
   periodMonth: string; isDeferred: boolean; isDistributed: boolean;
   contractId?: string; positionId?: string; originId?: string; referenceNumber?: string;
-  company?: CompanyName; notes?: string; createdAt: string;
-  contract?: { id: string; licitacionNo: string; client: string; company: CompanyName } | null;
+  company?: string; notes?: string; createdAt: string;
+  contract?: { id: string; licitacionNo: string; client: string; company: string } | null;
   position?: { id: string; name: string } | null;
   origin?: { id: string; name: string } | null;
   createdBy?: { name: string };
@@ -76,6 +77,9 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
   const qc = useQueryClient();
   const { data: session } = useSession();
   const canEdit = session?.user?.role ? userCanManageExpenses(session.user.role) : false;
+  const { data: companiesRes } = useCompanies();
+  const companyRows = companiesRes?.data ?? [];
+  const activeCompanies = companyRows.filter((c) => c.isActive);
   const expenseFileRef = useRef<HTMLInputElement>(null);
   const [expenseImporting, setExpenseImporting] = useState(false);
 
@@ -91,7 +95,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
   const [editForm, setEditForm] = useState({
     type: "OTHER" as ExpenseType,
     budgetLine: "LABOR" as ExpenseBudgetLine,
-    company: "" as CompanyName | "",
+    company: "",
     description: "",
     originId: "",
     referenceNumber: "",
@@ -110,7 +114,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
     positionId: "",
     originId: "",
     referenceNumber: "",
-    company: "" as CompanyName | "",
+    company: "",
     notes: "",
     /** Prorrateo del monto en N meses (solo contrato específico) */
     spreadMonths: 1,
@@ -366,14 +370,26 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
       const errLines =
         d?.errors && d.errors.length > 0
           ? d.errors
-              .slice(0, 12)
+              .slice(0, 100)
               .map((e) => `Fila ${e.sheetRow}: ${e.message}`)
-              .join("\n")
+              .join("\n") +
+              (d.errors.length > 100 ? `\n… y ${d.errors.length - 100} más.` : "")
+          : "";
+      const errHint =
+        errLines !== ""
+          ? `\n\n— «Fila N» es el número de fila en su Excel (la fila 1 son los títulos).`
           : "";
       if (createdN > 0) {
-        toast.success(d?.message ?? `Se registraron ${createdN} movimiento(s).`, errLines || undefined);
+        toast.success(
+          d?.message ?? `Se registraron ${createdN} movimiento(s).`,
+          errLines ? `${errLines}${errHint}` : undefined,
+          errLines ? { durationMs: 90_000, copyable: true } : undefined
+        );
       } else if (errLines) {
-        toast.error("No se importaron gastos", errLines);
+        toast.error("No se importaron gastos", `${errLines}${errHint}`, {
+          durationMs: 90_000,
+          copyable: true,
+        });
       } else {
         toast.info("Importación", d?.message ?? "Sin filas nuevas.");
       }
@@ -454,7 +470,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                 <SelectTrigger className="w-40"><SelectValue placeholder="Empresa" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todas</SelectItem>
-                  {COMPANIES.map(c => <SelectItem key={c} value={c}>{COMPANY_LABELS[c]}</SelectItem>)}
+                  {companyRows.map((c) => <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -512,7 +528,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                             {budgetLineLabel(e.budgetLine)}
                           </td>
                           <td className="px-4 py-3 text-slate-600 text-xs">
-                            {e.company ? COMPANY_LABELS[e.company] : "—"}
+                            {e.company ? companyDisplayName(e.company, companyRows) : "—"}
                           </td>
                           <td className="px-4 py-3 max-w-xs">
                             <div className="font-medium text-slate-800 truncate">{e.description}</div>
@@ -534,7 +550,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                             {e.contract ? (
                               <div>
                                 <div className="font-medium text-slate-700">{e.contract.client}</div>
-                                <div className="text-xs text-slate-400">{e.contract.licitacionNo} · {COMPANY_LABELS[e.contract.company]}</div>
+                                <div className="text-xs text-slate-400">{e.contract.licitacionNo} · {companyDisplayName(e.contract.company, companyRows)}</div>
                                 {e.position && <div className="text-xs text-blue-500 mt-0.5">Puesto: {e.position.name}</div>}
                               </div>
                             ) : e.isDeferred ? (
@@ -655,15 +671,15 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                 <label className="text-sm font-medium text-slate-700">Empresa</label>
                 <Select
                   value={editForm.company || "none"}
-                  onValueChange={(v) => setEditForm((f) => ({ ...f, company: v === "none" ? "" : (v as CompanyName) }))}
+                  onValueChange={(v) => setEditForm((f) => ({ ...f, company: v === "none" ? "" : v }))}
                 >
                   <SelectTrigger className="h-9">
                     <SelectValue placeholder="Empresa" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">— Sin especificar —</SelectItem>
-                    {COMPANIES.map((c) => (
-                      <SelectItem key={c} value={c}>{COMPANY_LABELS[c]}</SelectItem>
+                    {activeCompanies.map((c) => (
+                      <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -788,15 +804,15 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                 <label className="text-sm font-medium text-slate-700">Empresa</label>
                 <Select
                   value={form.company || "none"}
-                  onValueChange={(v) => setForm((f) => ({ ...f, company: v === "none" ? "" : (v as CompanyName) }))}
+                  onValueChange={(v) => setForm((f) => ({ ...f, company: v === "none" ? "" : v }))}
                 >
                   <SelectTrigger className="h-9">
                     <SelectValue placeholder="Empresa del gasto" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">— Seleccione —</SelectItem>
-                    {COMPANIES.map((c) => (
-                      <SelectItem key={c} value={c}>{COMPANY_LABELS[c]}</SelectItem>
+                    {activeCompanies.map((c) => (
+                      <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -917,7 +933,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                         }}
                       >
                         <div className="font-medium text-slate-800">{c.client}</div>
-                        <div className="text-xs text-slate-400">{c.licitacionNo} · {COMPANY_LABELS[c.company]}</div>
+                        <div className="text-xs text-slate-400">{c.licitacionNo} · {companyDisplayName(c.company, companyRows)}</div>
                       </button>
                     ))}
                   </div>
@@ -1039,7 +1055,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
               <div className="bg-slate-50 rounded-lg p-4 grid grid-cols-2 gap-3 text-sm">
                 <div><span className="text-slate-500">Descripción:</span> <span className="font-medium ml-1">{previewExpense.description}</span></div>
                 <div><span className="text-slate-500">Monto:</span> <span className="font-semibold ml-1">{formatCurrency(previewExpense.amount)}</span></div>
-                <div><span className="text-slate-500">Empresa:</span> <span className="font-medium ml-1">{previewExpense.company ? COMPANY_LABELS[previewExpense.company] : "—"}</span></div>
+                <div><span className="text-slate-500">Empresa:</span> <span className="font-medium ml-1">{previewExpense.company ? companyDisplayName(previewExpense.company, companyRows) : "—"}</span></div>
                 <div><span className="text-slate-500">Período:</span> <span className="font-medium ml-1">{formatMonthYear(previewExpense.periodMonth)}</span></div>
               </div>
 
@@ -1064,7 +1080,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                             <div className="text-xs text-slate-400">{d.licitacionNo}</div>
                           </td>
                           <td className="px-4 py-2.5 text-slate-500 text-sm">
-                            {COMPANY_LABELS[d.company]}
+                            {companyDisplayName(d.company, companyRows)}
                           </td>
                           <td className="px-4 py-2.5 text-right text-slate-600">
                             {(d.equivalencePct * 100).toFixed(2)}%
