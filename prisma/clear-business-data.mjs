@@ -1,10 +1,8 @@
 /**
- * Elimina datos operativos de prueba: contratos, gastos, distribuciones, uniformes,
- * hallazgos, historial de facturación, períodos, puestos y bitácora asociada.
- * No elimina usuarios, sesiones ni catálogos (orígenes de gasto, etc.).
+ * Misma lógica que clear-business-data.ts, sin ts-node (útil en imagen Docker).
  *
- * Uso: npx ts-node prisma/clear-business-data.ts
- * Producción (Docker): node prisma/clear-business-data.mjs
+ * Uso local: node prisma/clear-business-data.mjs
+ * Docker:    docker compose -f docker-compose.prod.yml exec app node prisma/clear-business-data.mjs
  */
 import { PrismaClient } from "@prisma/client";
 

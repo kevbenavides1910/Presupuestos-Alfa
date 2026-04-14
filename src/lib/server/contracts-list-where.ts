@@ -1,6 +1,7 @@
 import type { Session } from "next-auth";
-import type { ContractStatus } from "@prisma/client";
+import type { ContractStatus, UserRole } from "@prisma/client";
 import { monthsAgoServer } from "@/lib/utils/time";
+import { isAdmin } from "@/lib/permissions";
 
 /** Misma lógica de filtro que GET /api/contracts (búsqueda, empresa, estado, assignable, etc.). */
 export function buildContractListWhere(
@@ -15,8 +16,11 @@ export function buildContractListWhere(
 
   const where: Record<string, unknown> = { deletedAt: null };
 
-  if (session.user?.company) {
-    where.company = session.user.company;
+  const role = session.user?.role as UserRole | undefined;
+  const restrictToUserCompany = Boolean(session.user?.company && role && !isAdmin(role));
+
+  if (restrictToUserCompany) {
+    where.company = session.user!.company;
   } else if (companyValues.length === 1) {
     where.company = companyValues[0];
   } else if (companyValues.length > 1) {
