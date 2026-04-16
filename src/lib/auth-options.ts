@@ -1,6 +1,5 @@
 import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import { PrismaAdapter } from "@auth/prisma-adapter";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import type { UserRole } from "@prisma/client";
@@ -31,7 +30,7 @@ declare module "next-auth/jwt" {
 }
 
 export const authOptions: NextAuthOptions = {
-  adapter: PrismaAdapter(prisma) as never,
+  // JWT + credenciales: no hace falta PrismaAdapter; evita que NextAuth toque la BD en rutas como /api/auth/session.
   session: { strategy: "jwt" },
   pages: { signIn: "/login" },
   providers: [
