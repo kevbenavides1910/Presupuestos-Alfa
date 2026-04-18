@@ -5,9 +5,12 @@ import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/layout/Topbar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MultiSelect } from "@/components/ui/multi-select";
+import { FileSpreadsheet } from "lucide-react";
 import { formatCurrency } from "@/lib/utils/format";
+import { exportRowsToExcel } from "@/lib/utils/excel-export";
 import {
   companyDisplayName,
   CONTRACT_STATUS_LABELS,
@@ -223,6 +226,60 @@ export default function AnnualReportPage() {
   const totalExpenses  = rows.reduce((s, r) => s + r.annualExpenses, 0);
   const totalSurplus   = rows.reduce((s, r) => s + r.annualSurplus, 0);
 
+  function handleExport() {
+    if (rows.length === 0) return;
+    const valueByMonth = (cell: typeof rows[0]["months"][number]): number => {
+      if (!cell.hasData) return 0;
+      if (view === "rentabilidad") return cell.surplus;
+      if (view === "facturacion") return cell.monthlyBilling;
+      return cell.totalExpenses;
+    };
+    const totalByRow = (r: typeof rows[0]): number => {
+      if (view === "rentabilidad") return r.annualSurplus;
+      if (view === "facturacion") return r.months.reduce((s, m) => s + (m.hasData ? m.monthlyBilling : 0), 0);
+      return r.annualExpenses;
+    };
+
+    const exportRows = rows.map((r) => {
+      const obj: Record<string, string | number> = {
+        Licitación: r.licitacionNo,
+        Cliente: r.client,
+        Empresa: companyDisplayName(r.company, companyRows),
+        Estado: CONTRACT_STATUS_LABELS[r.status as keyof typeof CONTRACT_STATUS_LABELS] ?? r.status,
+      };
+      MONTH_LABELS.forEach((m, i) => {
+        obj[m] = r.months[i].hasData ? valueByMonth(r.months[i]) : "";
+      });
+      obj["Anual"] = totalByRow(r);
+      return obj;
+    });
+
+    const totalRow: Record<string, string | number> = {
+      Licitación: "TOTALES",
+      Cliente: `${rows.length} contratos`,
+      Empresa: "",
+      Estado: "",
+    };
+    MONTH_LABELS.forEach((m, i) => {
+      const sum = rows.reduce((s, r) => s + valueByMonth(r.months[i]), 0);
+      totalRow[m] = sum;
+    });
+    totalRow["Anual"] =
+      view === "rentabilidad" ? totalSurplus
+      : view === "facturacion" ? totalBilling
+      : totalExpenses;
+
+    const viewSuffix = view === "rentabilidad" ? "rentabilidad" : view === "facturacion" ? "facturacion" : "gastos";
+    const partidaSuffix = partida === "ALL" ? "todas" : partida.toLowerCase();
+    exportRowsToExcel({
+      filename: `reporte_anual_${effectiveYear}_${viewSuffix}_${partidaSuffix}`,
+      sheetName: `Anual ${effectiveYear}`,
+      rows: exportRows,
+      totalRow,
+      columnWidths: [16, 30, 14, 14, ...Array(12).fill(13), 16],
+    });
+  }
+
   return (
     <>
       <Topbar title="Reporte Anual" />
@@ -285,6 +342,21 @@ export default function AnnualReportPage() {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-slate-600 block mb-1">&nbsp;</label>
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2"
+              onClick={handleExport}
+              disabled={rows.length === 0}
+              title="Descargar el reporte anual a Excel"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              Exportar a Excel ({rows.length})
+            </Button>
           </div>
 
           {/* Summary KPIs */}

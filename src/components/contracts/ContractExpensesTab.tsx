@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Trash2, Share2, Eye, Receipt } from "lucide-react";
+import { Trash2, Eye, Receipt, FileSpreadsheet } from "lucide-react";
+import { exportRowsToExcel } from "@/lib/utils/excel-export";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -21,11 +22,12 @@ interface Distribution {
 interface Expense {
   id: string; type: ExpenseType; description: string; amount: number;
   periodMonth: string; isDeferred: boolean; isDistributed: boolean;
+  approvalStatus?: string;
   referenceNumber?: string; notes?: string; createdAt: string;
   // Extra fields returned for deferred distributions
   fullAmount?: number; equivalencePct?: number; allocatedAmount?: number;
   origin?: { id: string; name: string } | null;
-  position?: { id: string; name: string } | null;
+  position?: { id: string; name: string; location?: { name: string } | null } | null;
   createdBy?: { name: string };
 }
 interface ExpenseTypeConfig {
@@ -118,8 +120,11 @@ export function ContractExpensesTab({
   // Distribution preview
   const { data: previewData, isLoading: previewLoading } = useQuery<{ data: Distribution[] }>({
     queryKey: ["expense-preview", previewExpense?.id],
-    queryFn: () => fetch(`/api/expenses/${previewExpense!.id}/distribute`).then(r => r.json()),
-    enabled: !!previewExpense,
+    queryFn: () =>
+      fetch(`/api/expenses/${previewExpense!.id}/distribute`, { credentials: "same-origin" }).then((r) =>
+        r.json()
+      ),
+    enabled: !!previewExpense && !!previewExpense.isDeferred && previewExpense.approvalStatus !== "REJECTED",
   });
 
   const deleteMutation = useMutation({
@@ -132,18 +137,6 @@ export function ContractExpensesTab({
       qc.invalidateQueries({ queryKey: ["profitability", contractId] });
     },
     onError: () => toast.error("Error al eliminar"),
-  });
-
-  const distributeMutation = useMutation({
-    mutationFn: (id: string) =>
-      fetch(`/api/expenses/${id}/distribute`, { method: "POST" }).then(r => r.json()),
-    onSuccess: () => {
-      toast.success("Gasto distribuido correctamente");
-      qc.invalidateQueries({ queryKey: ["contract-expenses", contractId] });
-      qc.invalidateQueries({ queryKey: ["profitability", contractId] });
-      setPreviewExpense(null);
-    },
-    onError: () => toast.error("Error al distribuir"),
   });
 
   const expenses = isDeferred ? (deferredData?.data ?? []) : (data?.data ?? []);
@@ -199,6 +192,58 @@ export function ContractExpensesTab({
               </SelectContent>
             </Select>
           )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 gap-2"
+            disabled={displayedExpenses.length === 0}
+            onClick={() => {
+              const exportRows = displayedExpenses.map((e) => {
+                const ti = typeInfo(e.type, typeConfigs);
+                return {
+                  Tipo: ti.label,
+                  Descripción: e.description,
+                  Notas: e.notes ?? "",
+                  Ubicación: e.position?.location?.name ?? "",
+                  Puesto: e.position?.name ?? "",
+                  Origen: e.origin?.name ?? "",
+                  "Referencia": e.referenceNumber ?? "",
+                  Período: formatMonthYear(e.periodMonth),
+                  "Registrado": new Date(e.createdAt).toLocaleString("es-CR"),
+                  "Registrado por": e.createdBy?.name ?? "",
+                  Monto: e.amount,
+                  "Monto total (diferido)": e.fullAmount ?? "",
+                  "Equivalencia %": e.equivalencePct != null ? (e.equivalencePct * 100).toFixed(2) + "%" : "",
+                  Reparto: isDeferred ? "Diferido" : e.isDeferred ? "Diferido" : "Directo",
+                  Estado: e.approvalStatus ?? "",
+                };
+              });
+              const totalRow: Record<string, string | number> = {
+                Tipo: "TOTAL",
+                Descripción: "",
+                Notas: "",
+                Ubicación: "",
+                Puesto: "",
+                Origen: "",
+                Referencia: "",
+                Período: "",
+                Registrado: "",
+                "Registrado por": "",
+                Monto: total,
+              };
+              exportRowsToExcel({
+                filename: `gastos_contrato_${contractId}`,
+                sheetName: "Gastos",
+                rows: exportRows,
+                totalRow,
+                columnWidths: [16, 36, 30, 22, 18, 18, 18, 14, 18, 22, 16, 18, 14, 12, 14],
+              });
+            }}
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            Exportar a Excel ({displayedExpenses.length})
+          </Button>
         </div>
       </div>
 
@@ -252,7 +297,13 @@ export function ContractExpensesTab({
                     </td>
                     <td className="px-4 py-3 max-w-xs">
                       <div className="font-medium text-slate-800 truncate">{e.description}</div>
-                      {e.position && <div className="text-xs text-blue-500">Puesto: {e.position.name}</div>}
+                      {e.position && (
+                        <div className="text-xs text-blue-500">
+                          {e.position.location
+                            ? `${e.position.location.name} › ${e.position.name}`
+                            : `Puesto: ${e.position.name}`}
+                        </div>
+                      )}
                       {e.notes && <div className="text-xs text-slate-400 truncate">{e.notes}</div>}
                     </td>
                     <td className="px-4 py-3">
@@ -300,16 +351,7 @@ export function ContractExpensesTab({
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1 justify-end">
-                        {/* Deferred tab is read-only — navigate to global expenses to manage */}
-                        {canManageExpenses && !isDeferred && e.isDeferred && !e.isDistributed && (
-                          <Button size="sm" variant="outline"
-                            className="gap-1 text-blue-600 border-blue-200 hover:bg-blue-50 text-xs h-7"
-                            onClick={() => setPreviewExpense(e)}
-                          >
-                            <Share2 className="h-3 w-3" />
-                          </Button>
-                        )}
-                        {!isDeferred && e.isDeferred && e.isDistributed && (
+                        {(isDeferred || e.isDeferred) && (
                           <Button size="sm" variant="ghost" className="h-7" onClick={() => setPreviewExpense(e)}>
                             <Eye className="h-3 w-3" />
                           </Button>
@@ -345,7 +387,7 @@ export function ContractExpensesTab({
           <div className="px-6 pt-6 pb-4 shrink-0">
             <DialogHeader>
               <DialogTitle>
-                {previewExpense?.isDistributed ? "Detalle de distribución" : "Distribuir gasto proporcionalmente"}
+                {previewExpense?.isDeferred ? "Reparto del gasto diferido" : "Detalle de gasto"}
               </DialogTitle>
             </DialogHeader>
           </div>
@@ -356,49 +398,51 @@ export function ContractExpensesTab({
                 <div><span className="text-slate-500">Monto:</span> <span className="font-semibold ml-1">{formatCurrency(previewExpense.amount)}</span></div>
                 <div><span className="text-slate-500">Período:</span> <span className="font-medium ml-1">{formatMonthYear(previewExpense.periodMonth)}</span></div>
               </div>
-              {previewLoading ? (
-                <div className="text-center py-6 text-slate-400">Calculando distribución...</div>
-              ) : (
-                <div className="border rounded-lg overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-slate-50 border-b">
-                        <th className="text-left px-4 py-2.5 font-semibold text-slate-600">Contrato</th>
-                        <th className="text-left px-4 py-2.5 font-semibold text-slate-600">Empresa</th>
-                        <th className="text-right px-4 py-2.5 font-semibold text-slate-600">Equiv. %</th>
-                        <th className="text-right px-4 py-2.5 font-semibold text-slate-600">Monto</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {(previewData?.data ?? []).map(d => (
-                        <tr key={d.contractId} className="hover:bg-slate-50">
-                          <td className="px-4 py-2.5">
-                            <div className="font-medium">{d.client}</div>
-                            <div className="text-xs text-slate-400">{d.licitacionNo}</div>
-                          </td>
-                          <td className="px-4 py-2.5 text-slate-500 text-sm">{companyDisplayName(d.company, companyRows)}</td>
-                          <td className="px-4 py-2.5 text-right text-slate-600">{(d.equivalencePct * 100).toFixed(2)}%</td>
-                          <td className="px-4 py-2.5 text-right font-semibold">{formatCurrency(d.allocatedAmount)}</td>
+              {previewExpense.isDeferred ? (
+                previewLoading ? (
+                  <div className="text-center py-6 text-slate-400">Calculando distribución...</div>
+                ) : (
+                  <div className="border rounded-lg overflow-hidden">
+                    <p className="text-xs text-slate-500 px-3 py-2 bg-slate-50 border-b">
+                      Para cambiar los contratos del reparto use la pantalla global de Gastos.
+                    </p>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-slate-50 border-b">
+                          <th className="text-left px-4 py-2.5 font-semibold text-slate-600">Contrato</th>
+                          <th className="text-left px-4 py-2.5 font-semibold text-slate-600">Empresa</th>
+                          <th className="text-right px-4 py-2.5 font-semibold text-slate-600">Equiv. %</th>
+                          <th className="text-right px-4 py-2.5 font-semibold text-slate-600">Monto</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                      </thead>
+                      <tbody className="divide-y">
+                        {(previewData?.data ?? []).map((d) => (
+                          <tr key={d.contractId} className="hover:bg-slate-50">
+                            <td className="px-4 py-2.5">
+                              <div className="font-medium">{d.client}</div>
+                              <div className="text-xs text-slate-400">{d.licitacionNo}</div>
+                            </td>
+                            <td className="px-4 py-2.5 text-slate-500 text-sm">
+                              {companyDisplayName(d.company, companyRows)}
+                            </td>
+                            <td className="px-4 py-2.5 text-right text-slate-600">
+                              {(d.equivalencePct * 100).toFixed(2)}%
+                            </td>
+                            <td className="px-4 py-2.5 text-right font-semibold">
+                              {formatCurrency(d.allocatedAmount)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              ) : null}
             </div>
           )}
           <div className="shrink-0 border-t bg-background px-6 py-4">
             <DialogFooter className="gap-2 sm:gap-0">
               <Button variant="outline" onClick={() => setPreviewExpense(null)}>Cerrar</Button>
-              {canManageExpenses && previewExpense && !previewExpense.isDistributed && (
-                <Button
-                  onClick={() => distributeMutation.mutate(previewExpense.id)}
-                  disabled={distributeMutation.isPending || previewLoading}
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  {distributeMutation.isPending ? "Distribuyendo..." : "Confirmar distribución"}
-                </Button>
-              )}
             </DialogFooter>
           </div>
         </DialogContent>

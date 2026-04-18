@@ -192,9 +192,10 @@ export async function getContractProfitability(
   const expenseDists = await prisma.expenseDistribution.findMany({
     where: {
       contractId,
-      ...(range
-        ? { expense: { periodMonth: { gte: range.gte, lte: range.lte } } }
-        : {}),
+      expense: {
+        approvalStatus: { not: "REJECTED" },
+        ...(range ? { periodMonth: { gte: range.gte, lte: range.lte } } : {}),
+      },
     },
     include: { expense: { select: { type: true, budgetLine: true } } },
   });

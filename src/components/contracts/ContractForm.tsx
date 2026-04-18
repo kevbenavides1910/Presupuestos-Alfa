@@ -102,23 +102,46 @@ export function ContractForm({ defaultValues, mode = "create" }: Props) {
       const result = await res.json();
       const contractId = result.data.id;
 
-      // Create positions if any were defined
+      // Ubicaciones → puestos → turnos (si se definieron al crear)
       if (mode === "create" && positions.length > 0) {
-        await Promise.all(
-          positions
-            .filter(p => p.name.trim())
-            .map(p =>
-              fetch(`/api/contracts/${contractId}/positions`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  name: p.name.trim(),
-                  shift: p.shift.trim() || undefined,
-                  location: p.location.trim() || undefined,
-                }),
-              })
-            )
-        );
+        const rows = positions.filter((p) => p.name.trim());
+        const byLocation = new Map<string, typeof rows>();
+        for (const p of rows) {
+          const key = p.location.trim() || "__default__";
+          const list = byLocation.get(key) ?? [];
+          list.push(p);
+          byLocation.set(key, list);
+        }
+        for (const [key, group] of byLocation) {
+          const locName = key === "__default__" ? "Ubicación general" : key;
+          const locRes = await fetch(`/api/contracts/${contractId}/locations`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: locName }),
+          });
+          const locJson = (await locRes.json()) as { data?: { id: string }; error?: { message?: string } };
+          if (!locRes.ok) {
+            throw new Error(locJson.error?.message ?? `No se pudo crear la ubicación «${locName}»`);
+          }
+          const locationId = locJson.data?.id;
+          if (!locationId) {
+            throw new Error(`Respuesta inválida al crear ubicación «${locName}»`);
+          }
+          for (const p of group) {
+            const posRes = await fetch(`/api/contracts/${contractId}/locations/${locationId}/positions`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: p.name.trim(),
+                shifts: p.shift.trim() ? [{ label: p.shift.trim(), hours: 8 }] : undefined,
+              }),
+            });
+            if (!posRes.ok) {
+              const pj = (await posRes.json()) as { error?: { message?: string } };
+              throw new Error(pj.error?.message ?? `Error al crear puesto «${p.name.trim()}»`);
+            }
+          }
+        }
       }
 
       return result;
@@ -127,6 +150,8 @@ export function ContractForm({ defaultValues, mode = "create" }: Props) {
       const contractId = data.data.id as string;
       queryClient.invalidateQueries({ queryKey: ["contracts"] });
       queryClient.invalidateQueries({ queryKey: ["contract", contractId] });
+      queryClient.invalidateQueries({ queryKey: ["contract-locations", contractId] });
+      queryClient.invalidateQueries({ queryKey: ["positions-for-expense", contractId] });
       queryClient.invalidateQueries({ queryKey: ["profitability", contractId] });
       toast.success(mode === "edit" ? "Contrato actualizado" : "Contrato creado exitosamente");
       router.push(`/contracts/${contractId}`);
@@ -241,10 +266,10 @@ export function ContractForm({ defaultValues, mode = "create" }: Props) {
         </CardContent>
       </Card>
 
-      {/* ── Personal y Puestos ── */}
+      {/* ── Personal, ubicaciones y puestos ── */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Personal y Puestos</CardTitle>
+          <CardTitle className="text-base">Personal y estructura (ubicaciones / puestos)</CardTitle>
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -275,11 +300,14 @@ export function ContractForm({ defaultValues, mode = "create" }: Props) {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-slate-700">Definir puestos</p>
-                  <p className="text-xs text-slate-400">Opcional — también puedes agregarlos después desde el detalle del contrato.</p>
+                  <p className="text-sm font-medium text-slate-700">Ubicaciones y puestos</p>
+                  <p className="text-xs text-slate-400">
+                    Misma fila: nombre del puesto, etiqueta de turno (8 h por defecto al guardar) y nombre de ubicación.
+                    Filas con la misma ubicación se agrupan. Opcional — también desde la pestaña Ubicaciones del contrato.
+                  </p>
                 </div>
                 <Button type="button" size="sm" variant="outline" className="gap-1.5" onClick={addPosition}>
-                  <Plus className="h-3.5 w-3.5" /> Agregar puesto
+                  <Plus className="h-3.5 w-3.5" /> Agregar fila
                 </Button>
               </div>
 
@@ -312,12 +340,12 @@ export function ContractForm({ defaultValues, mode = "create" }: Props) {
                         </div>
                         <div className="space-y-1">
                           <Label className="text-xs text-slate-500 flex items-center gap-1">
-                            <MapPin className="h-3 w-3" /> Ubicación
+                            <MapPin className="h-3 w-3" /> Ubicación (agrupa puestos)
                           </Label>
                           <Input
                             size={1}
                             className="h-8 text-sm"
-                            placeholder="Ej: Edificio A, Entrada Principal"
+                            placeholder="Vacío = «Ubicación general»"
                             value={pos.location}
                             onChange={e => updatePosition(i, "location", e.target.value)}
                           />

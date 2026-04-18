@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, X, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { Plus, X, TrendingUp, TrendingDown, Minus, FileSpreadsheet } from "lucide-react";
+import { exportRowsToExcel } from "@/lib/utils/excel-export";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -91,21 +92,53 @@ export function BillingHistoryTab({
             {" · "}Presupuesto insumos: <span className="font-semibold">{(suppliesBudgetPct * 100).toFixed(1)}%</span>
           </p>
         </div>
-        {!readOnly && (
+        <div className="flex items-center gap-2">
           <Button
+            type="button"
+            variant="outline"
             size="sm"
             className="gap-1.5"
+            disabled={entries.length === 0}
             onClick={() => {
-              setShowForm((prev) => {
-                if (!prev) setForm((f) => ({ ...f, monthlyBilling }));
-                return !prev;
+              const exportRows = entries.map((e) => {
+                const diff = e.monthlyBilling - contractBaseBilling;
+                const pct = contractBaseBilling > 0 ? (diff / contractBaseBilling) * 100 : 0;
+                return {
+                  Período: formatMonthYear(e.periodMonth),
+                  Facturación: e.monthlyBilling,
+                  "Presupuesto insumos": e.suppliesBudget,
+                  "vs. Base ₡": diff,
+                  "vs. Base %": diff !== 0 ? `${diff > 0 ? "+" : ""}${pct.toFixed(2)}%` : "0%",
+                  Notas: e.notes ?? "",
+                };
+              });
+              exportRowsToExcel({
+                filename: `facturacion_contrato_${contractId}`,
+                sheetName: "Facturación",
+                rows: exportRows,
+                columnWidths: [16, 18, 22, 16, 12, 40],
               });
             }}
           >
-            {showForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-            {showForm ? "Cancelar" : "Actualizar Facturación"}
+            <FileSpreadsheet className="h-4 w-4" />
+            Exportar a Excel ({entries.length})
           </Button>
-        )}
+          {!readOnly && (
+            <Button
+              size="sm"
+              className="gap-1.5"
+              onClick={() => {
+                setShowForm((prev) => {
+                  if (!prev) setForm((f) => ({ ...f, monthlyBilling }));
+                  return !prev;
+                });
+              }}
+            >
+              {showForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+              {showForm ? "Cancelar" : "Actualizar Facturación"}
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Form */}

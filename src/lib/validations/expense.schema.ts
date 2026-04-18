@@ -41,6 +41,10 @@ export const expenseCreateSchema = z
     isDeferred: z.boolean().default(false),
     notes: z.string().optional(),
     spreadMonths: z.coerce.number().int().min(1).max(60).default(1),
+    registroCxp: z.string().optional(),
+    registroTr: z.string().optional(),
+    /** Vacío = todos los contratos activos en el reparto. Si se envía, solo esos IDs. */
+    deferredIncludeContractIds: z.array(z.string().min(1)).optional(),
   })
   .refine((d) => d.isDeferred || d.contractId, {
     message: "Debe especificar un contrato (o marcar como diferido)",

@@ -6,8 +6,8 @@ import { Providers } from "@/providers/Providers";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Control de Rentabilidad | Grupo Seguridad CR",
-  description: "Sistema de control de rentabilidad de contratos de seguridad privada",
+  title: "Control de Rentabilidad | Syntra",
+  description: "Sistema de control de rentabilidad de contratos — Syntra",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

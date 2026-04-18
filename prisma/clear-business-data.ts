@@ -14,6 +14,8 @@ async function main() {
   console.log("Eliminando datos de negocio…");
 
   await prisma.$transaction(async (tx) => {
+    await tx.assetMovement.deleteMany();
+    await tx.asset.deleteMany();
     await tx.expenseDistribution.deleteMany();
     await tx.expense.deleteMany();
     await tx.adminDistribution.deleteMany();
@@ -24,7 +26,9 @@ async function main() {
     await tx.auditFinding.deleteMany();
     await tx.billingHistory.deleteMany();
     await tx.contractPeriod.deleteMany();
+    await tx.positionShift.deleteMany();
     await tx.position.deleteMany();
+    await tx.contractLocation.deleteMany();
     await tx.auditLog.deleteMany();
     await tx.contract.deleteMany();
   });

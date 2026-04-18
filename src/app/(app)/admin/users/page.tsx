@@ -3,7 +3,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useSession } from "next-auth/react";
-import { Plus, Pencil, UserX, UserCheck, KeyRound, X } from "lucide-react";
+import { Plus, Pencil, UserX, UserCheck, KeyRound, X, FileSpreadsheet } from "lucide-react";
+import { exportRowsToExcel } from "@/lib/utils/excel-export";
 import { Topbar } from "@/components/layout/Topbar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -231,9 +232,36 @@ export default function UsersPage() {
             <h2 className="text-xl font-bold text-slate-800">Usuarios</h2>
             <p className="text-sm text-slate-500">{active.length} activos · {inactive.length} inactivos</p>
           </div>
-          <Button className="gap-2" onClick={openCreate}>
-            <Plus className="h-4 w-4" /> Nuevo Usuario
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2"
+              disabled={users.length === 0}
+              onClick={() => {
+                const exportRows = users.map((u) => ({
+                  Nombre: u.name,
+                  Email: u.email,
+                  Rol: USER_ROLE_LABELS[u.role],
+                  Empresa: u.company ? companyDisplayName(u.company, companyRows) : "Todas",
+                  Estado: u.isActive ? "Activo" : "Inactivo",
+                  "Creado": new Date(u.createdAt).toLocaleDateString("es-CR"),
+                }));
+                exportRowsToExcel({
+                  filename: "usuarios",
+                  sheetName: "Usuarios",
+                  rows: exportRows,
+                  columnWidths: [28, 32, 16, 22, 12, 14],
+                });
+              }}
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              Exportar a Excel ({users.length})
+            </Button>
+            <Button className="gap-2" onClick={openCreate}>
+              <Plus className="h-4 w-4" /> Nuevo Usuario
+            </Button>
+          </div>
         </div>
 
         <Card>

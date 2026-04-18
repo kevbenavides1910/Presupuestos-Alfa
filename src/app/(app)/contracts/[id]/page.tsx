@@ -25,6 +25,7 @@ import { PeriodsTab } from "@/components/contracts/PeriodsTab";
 import { PositionsTab } from "@/components/contracts/PositionsTab";
 import { BillingHistoryTab } from "@/components/contracts/BillingHistoryTab";
 import { ContractExpensesTab } from "@/components/contracts/ContractExpensesTab";
+import { AssetsTab } from "@/components/contracts/AssetsTab";
 import { canModifyContracts, canManageExpenses, isAdmin } from "@/lib/permissions";
 import type { ContractStatus, ClientType } from "@prisma/client";
 
@@ -303,7 +304,8 @@ export default function ContractDetailPage() {
             <TabsTrigger value="expenses">Todos los Gastos</TabsTrigger>
             <TabsTrigger value="deferred">Diferidos</TabsTrigger>
             <TabsTrigger value="overview">Resumen</TabsTrigger>
-            <TabsTrigger value="positions">Puestos</TabsTrigger>
+            <TabsTrigger value="locations">Ubicaciones</TabsTrigger>
+            <TabsTrigger value="assets">Activos</TabsTrigger>
             <TabsTrigger value="billing">Facturación</TabsTrigger>
             <TabsTrigger value="periods">Prórrogas</TabsTrigger>
           </TabsList>
@@ -467,8 +469,12 @@ export default function ContractDetailPage() {
             </div>
           </TabsContent>
 
-          <TabsContent value="positions" className="mt-4">
+          <TabsContent value="locations" className="mt-4">
             <PositionsTab contractId={id} readOnly={!canEditContract} />
+          </TabsContent>
+
+          <TabsContent value="assets" className="mt-4">
+            <AssetsTab contractId={id} readOnly={!canEditExpenses} />
           </TabsContent>
 
           <TabsContent value="deferred" className="mt-4">

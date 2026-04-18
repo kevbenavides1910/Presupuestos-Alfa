@@ -61,6 +61,46 @@ enum ExpenseBudgetLine {
   PROFIT      // Utilidad
 }
 
+enum ExpenseApprovalStatus {
+  PENDING_APPROVAL
+  PARTIALLY_APPROVED
+  APPROVED
+  REJECTED
+}
+
+enum ExpenseApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
+enum AssetStatus {
+  IN_STOCK
+  ASSIGNED
+  PENDING_RETURN
+  RETIRED
+}
+
+enum AssetMovementType {
+  INTAKE
+  ISSUE
+  ASSIGN
+  RETURN
+}
+
+enum AssetIntakeReason {
+  PURCHASE
+  RETURN
+  INITIAL
+  OTHER
+}
+
+enum AssetIssueReason {
+  LOST
+  DAMAGED
+  DISPOSED
+  OTHER
+}
+
 // ─── Catálogo de empresas (código estable en mayúsculas, ej. ALFA) ─────────────
 
 model Company {
@@ -100,6 +140,10 @@ model User {
   sessions  Session[]
   auditLogs AuditLog[]
   expenses  Expense[] @relation("ExpenseCreatedBy")
+
+  expenseTypeApprovalSteps ExpenseTypeApprovalStep[] @relation("ExpenseTypeApprovalApprover")
+  expenseApprovals         ExpenseApproval[]           @relation("ExpenseApprovalApprover")
+  expenseAttachments       ExpenseAttachment[]         @relation("ExpenseAttachmentUploader")
 
   @@map("users")
 }
@@ -182,7 +226,7 @@ model Contract {
   auditLogs             AuditLog[]
   expenses              Expense[]
   expenseDistributions  ExpenseDistribution[] @relation("ExpenseDistributions")
-  positions             Position[]
+  locations             ContractLocation[]
 
   @@index([company])
   @@index([status])
@@ -407,20 +451,73 @@ model AuditLog {
 
 // ─── Unified Expenses ─────────────────────────────────────────────────────────
 
-model Position {
-  id          String   @id @default(cuid())
+/// Zona geográfica/operativa que agrupa ubicaciones (ej. Pacífico, GAM, Caribe).
+model Zone {
+  id          String              @id @default(cuid())
+  name        String              @unique
+  description String?
+  isActive    Boolean             @default(true)
+  sortOrder   Int                 @default(0)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  locations   ContractLocation[]
+
+  @@map("zones")
+}
+
+/// Ubicación física u operativa del contrato (contiene uno o más puestos).
+model ContractLocation {
+  id          String     @id @default(cuid())
   contractId  String
-  contract    Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  contract    Contract   @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  zoneId      String?
+  zone        Zone?      @relation(fields: [zoneId], references: [id], onDelete: SetNull)
   name        String
   description String?
-  shift       String?
-  location    String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  expenses    Expense[]
+  sortOrder   Int        @default(0)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  positions   Position[]
 
   @@index([contractId])
+  @@index([zoneId])
+  @@map("contract_locations")
+}
+
+/// Puesto de vigilancia / guardia dentro de una ubicación.
+model Position {
+  id          String           @id @default(cuid())
+  locationId  String
+  location    ContractLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  /// Línea telefónica fija del puesto (independiente del celular físico asignado)
+  phoneLine   String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  expenses    Expense[]
+  shifts      PositionShift[]
+  assets      Asset[]           @relation("PositionAssets")
+  assetMovementsFrom AssetMovement[] @relation("AssetMovementFrom")
+  assetMovementsTo   AssetMovement[] @relation("AssetMovementTo")
+
+  @@index([locationId])
   @@map("positions")
+}
+
+/// Turno asociado a un puesto (horas distintas por turno).
+model PositionShift {
+  id         String   @id @default(cuid())
+  positionId String
+  position   Position @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  label      String?
+  hours      Decimal  @db.Decimal(6, 2)
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([positionId])
+  @@map("position_shifts")
 }
 
 model ExpenseTypeConfig {
@@ -433,6 +530,55 @@ model ExpenseTypeConfig {
   updatedAt   DateTime    @updatedAt
 
   @@map("expense_type_configs")
+}
+
+/// Cadena de aprobación por tipo de gasto (paso 1, luego 2, …). Usuarios concretos.
+model ExpenseTypeApprovalStep {
+  id             String      @id @default(cuid())
+  expenseType    ExpenseType
+  stepOrder      Int
+  approverUserId String
+  approver       User        @relation("ExpenseTypeApprovalApprover", fields: [approverUserId], references: [id], onDelete: Restrict)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@unique([expenseType, stepOrder])
+  @@index([expenseType])
+  @@index([approverUserId])
+  @@map("expense_type_approval_steps")
+}
+
+model ExpenseApproval {
+  id             String                @id @default(cuid())
+  expenseId      String
+  expense        Expense               @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  stepOrder      Int
+  approverUserId String
+  approver       User                  @relation("ExpenseApprovalApprover", fields: [approverUserId], references: [id], onDelete: Restrict)
+  decision       ExpenseApprovalDecision
+  comment        String?               @db.Text
+  decidedAt      DateTime              @default(now())
+
+  @@index([expenseId])
+  @@index([approverUserId])
+  @@map("expense_approvals")
+}
+
+model ExpenseAttachment {
+  id           String   @id @default(cuid())
+  expenseId    String
+  expense      Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  uploadedById String
+  uploadedBy   User     @relation("ExpenseAttachmentUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+  fileName     String
+  mimeType     String
+  storagePath  String
+  note         String?  @db.Text
+  createdAt    DateTime @default(now())
+
+  @@index([expenseId])
+  @@index([uploadedById])
+  @@map("expense_attachments")
 }
 
 model ExpenseOrigin {
@@ -450,6 +596,8 @@ model ExpenseOrigin {
 
 model Expense {
   id              String        @id @default(cuid())
+  /// Consecutivo autoincremental único por gasto registrado
+  sequentialNo    Int           @unique @default(autoincrement())
   type            ExpenseType
   budgetLine      ExpenseBudgetLine?
   description     String
@@ -466,17 +614,32 @@ model Expense {
   companyEntity   Company?      @relation(fields: [company], references: [code])
   isDeferred      Boolean       @default(false)
   isDistributed   Boolean       @default(false)
+  /// Contratos que reciben el reparto del diferido. Vacío = todos los ACTIVE/PROLONGATION.
+  deferredIncludeContractIds String[] @default([])
   notes           String?
+  /// Registro contable / CXP (texto libre)
+  registroCxp     String?       @db.Text
+  /// Registro TR (texto libre)
+  registroTr      String?       @db.Text
+  approvalStatus        ExpenseApprovalStatus @default(APPROVED)
+  /// Siguiente paso a aprobar (1-based), null si no aplica o flujo terminado
+  currentApprovalStep   Int?
+  requiredApprovalSteps Int                   @default(0)
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   createdById     String
   createdBy       User          @relation("ExpenseCreatedBy", fields: [createdById], references: [id])
   distributions   ExpenseDistribution[]
+  approvals       ExpenseApproval[]
+  attachments     ExpenseAttachment[]
+  assetsAcquired  Asset[]           @relation("AssetAcquisitionExpense")
+  assetMovements  AssetMovement[]   @relation("AssetMovementExpense")
 
   @@index([contractId])
   @@index([positionId])
   @@index([originId])
   @@index([company])
+  @@index([approvalStatus])
   @@map("expenses")
 }
 
@@ -493,4 +656,90 @@ model ExpenseDistribution {
   @@unique([expenseId, contractId])
   @@index([contractId])
   @@map("expense_distributions")
+}
+
+// ─── Assets / Inventario ──────────────────────────────────────────────────────
+
+/// Catálogo editable de tipos de activos (celular, arma, radio, …).
+/// Cada tipo declara qué campos extra se piden a los activos de ese tipo.
+model AssetType {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  /// JSON: array de { key, label, type: "string"|"number"|"date"|"boolean", required }
+  fields    Json     @default("[]")
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assets    Asset[]
+
+  @@map("asset_types")
+}
+
+/// Activo individual (cada unidad física identificable).
+model Asset {
+  id                    String       @id @default(cuid())
+  typeId                String
+  type                  AssetType    @relation(fields: [typeId], references: [id], onDelete: Restrict)
+  /// Identificador único dentro del tipo (ej. serial, código interno).
+  code                  String
+  name                  String?
+  brand                 String?
+  model                 String?
+  /// Valores para los campos declarados en AssetType.fields (ej. { imei, numero, calibre }).
+  attributes            Json         @default("{}")
+  status                AssetStatus  @default(IN_STOCK)
+  currentPositionId     String?
+  currentPosition       Position?    @relation("PositionAssets", fields: [currentPositionId], references: [id], onDelete: SetNull)
+  acquisitionExpenseId  String?
+  acquisitionExpense    Expense?     @relation("AssetAcquisitionExpense", fields: [acquisitionExpenseId], references: [id], onDelete: SetNull)
+  acquisitionDate       DateTime?
+  notes                 String?      @db.Text
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  movements             AssetMovement[]
+
+  @@unique([typeId, code])
+  @@index([status])
+  @@index([currentPositionId])
+  @@index([typeId])
+  @@map("assets")
+}
+
+/// Historial de movimientos de un activo.
+model AssetMovement {
+  id              String              @id @default(cuid())
+  assetId         String
+  asset           Asset               @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  type            AssetMovementType
+  fromPositionId  String?
+  fromPosition    Position?           @relation("AssetMovementFrom", fields: [fromPositionId], references: [id], onDelete: SetNull)
+  toPositionId    String?
+  toPosition      Position?           @relation("AssetMovementTo", fields: [toPositionId], references: [id], onDelete: SetNull)
+  expenseId       String?
+  expense         Expense?            @relation("AssetMovementExpense", fields: [expenseId], references: [id], onDelete: SetNull)
+  intakeReason    AssetIntakeReason?
+  issueReason     AssetIssueReason?
+  notes           String?             @db.Text
+  createdById     String?
+  createdAt       DateTime            @default(now())
+
+  @@index([assetId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("asset_movements")
+}
+
+/// Marca / apariencia (fila única id = default): logo en disco y colores hex para UI.
+model AppBranding {
+  id           String   @id @default("default")
+  logoPath     String?
+  primaryHex   String   @default("#2563eb")
+  sidebarHex   String   @default("#0f172a")
+  updatedAt    DateTime @updatedAt
+
+  @@map("app_branding")
 }

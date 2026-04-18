@@ -10,3 +10,4 @@ dist/
 tsconfig.tsbuildinfo
 prisma/*.db
 prisma/dev.db
+uploads/

@@ -10,6 +10,9 @@ import {
 } from "@/lib/import/expense-rows";
 import { expenseImportTemplateBuffer } from "@/lib/import/templates";
 import type { ExpenseCreateInput } from "@/lib/validations/expense.schema";
+import type { ExpenseType } from "@prisma/client";
+import { getApprovalStepCountForType, initialApprovalFields } from "@/lib/server/expense-approval";
+import { applyDeferredExpenseDistributions } from "@/lib/server/deferred-expense-distribution";
 
 function rowErrorMessage(e: unknown): string {
   if (e instanceof Error) {
@@ -116,6 +119,14 @@ export async function POST(req: NextRequest) {
 
     let createdCount = 0;
 
+    const distinctTypes = [...new Set(toInsert.map((t) => t.data.type))] as ExpenseType[];
+    const countByType = new Map<ExpenseType, number>();
+    await Promise.all(
+      distinctTypes.map(async (t) => {
+        countByType.set(t, await getApprovalStepCountForType(t));
+      })
+    );
+
     for (const { sheetRow, data } of toInsert) {
       const {
         periodMonth,
@@ -131,11 +142,15 @@ export async function POST(req: NextRequest) {
         company,
         isDeferred,
         notes,
+        registroCxp,
+        registroTr,
       } = data;
 
       const spreadMonths = isDeferred ? 1 : rawSpread;
       const [year, month] = periodMonth.split("-").map(Number);
       const start = new Date(year, month - 1, 1);
+
+      const approval = initialApprovalFields(countByType.get(type) ?? 0);
 
       const common = {
         type,
@@ -147,12 +162,17 @@ export async function POST(req: NextRequest) {
         company,
         isDeferred,
         notes: notes || null,
+        registroCxp: registroCxp?.trim() || null,
+        registroTr: registroTr?.trim() || null,
         createdById: session.user.id,
+        approvalStatus: approval.approvalStatus,
+        currentApprovalStep: approval.currentApprovalStep,
+        requiredApprovalSteps: approval.requiredApprovalSteps,
       };
 
       try {
         if (spreadMonths <= 1) {
-          await prisma.expense.create({
+          const exp = await prisma.expense.create({
             data: {
               ...common,
               description: description.trim(),
@@ -161,13 +181,16 @@ export async function POST(req: NextRequest) {
             },
             include,
           });
+          if (isDeferred) {
+            await applyDeferredExpenseDistributions(prisma, exp.id);
+          }
           createdCount++;
           continue;
         }
 
         const amounts = splitAmountAcrossMonths(amount, spreadMonths);
         const desc = description.trim();
-        await prisma.$transaction(
+        const createdBatch = await prisma.$transaction(
           amounts.map((amt, i) =>
             prisma.expense.create({
               data: {
@@ -180,6 +203,11 @@ export async function POST(req: NextRequest) {
             })
           )
         );
+        if (isDeferred) {
+          for (const exp of createdBatch) {
+            await applyDeferredExpenseDistributions(prisma, exp.id);
+          }
+        }
         createdCount += amounts.length;
       } catch (e) {
         errors.push({ sheetRow, message: rowErrorMessage(e) });

@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, Save, GripVertical, Info } from "lucide-react";
+import { Plus, Pencil, Trash2, Save, GripVertical, Info, FileSpreadsheet } from "lucide-react";
 import { Topbar } from "@/components/layout/Topbar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "@/components/ui/toaster";
+import { exportRowsToExcel } from "@/lib/utils/excel-export";
 import { isAdmin } from "@/lib/permissions";
+import { ExpenseApprovalChainsTab } from "@/components/admin/ExpenseApprovalChainsTab";
+import { BrandingAppearanceTab } from "@/components/admin/BrandingAppearanceTab";
+import { AssetTypesTab } from "@/components/admin/AssetTypesTab";
+import { ZonesTab } from "@/components/admin/ZonesTab";
+import { LocationsTab } from "@/components/admin/LocationsTab";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ExpenseTypeConfig {
@@ -124,22 +130,48 @@ function ExpenseTypesTab({ readOnly }: { readOnly?: boolean }) {
             Use <strong className="font-medium text-slate-600">Restablecer</strong> para volver a etiqueta y color por defecto.
           </p>
         </div>
-        {!readOnly && (
-          <div className="flex flex-wrap gap-2 shrink-0">
-            <Button variant="outline" className="gap-2" onClick={() => setShowTypeInfo(true)}>
-              <Plus className="h-4 w-4" />
-              ¿Agregar tipo?
-            </Button>
-            <Button
-              className="gap-2"
-              onClick={() => saveMutation.mutate(rows)}
-              disabled={saveMutation.isPending}
-            >
-              <Save className="h-4 w-4" />
-              {saveMutation.isPending ? "Guardando..." : "Guardar cambios"}
-            </Button>
-          </div>
-        )}
+        <div className="flex flex-wrap gap-2 shrink-0">
+          <Button
+            type="button"
+            variant="outline"
+            className="gap-2"
+            disabled={rows.length === 0}
+            onClick={() => {
+              const exportRows = rows.map((r) => ({
+                Tipo: r.type,
+                Etiqueta: r.label,
+                Color: r.color,
+                Activo: r.isActive ? "Sí" : "No",
+                Orden: r.sortOrder,
+              }));
+              exportRowsToExcel({
+                filename: "tipos_de_gasto",
+                sheetName: "Tipos de gasto",
+                rows: exportRows,
+                columnWidths: [16, 22, 32, 8, 8],
+              });
+            }}
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            Exportar a Excel ({rows.length})
+          </Button>
+          {!readOnly && (
+            <>
+              <Button variant="outline" className="gap-2" onClick={() => setShowTypeInfo(true)}>
+                <Plus className="h-4 w-4" />
+                ¿Agregar tipo?
+              </Button>
+              <Button
+                className="gap-2"
+                onClick={() => saveMutation.mutate(rows)}
+                disabled={saveMutation.isPending}
+              >
+                <Save className="h-4 w-4" />
+                {saveMutation.isPending ? "Guardando..." : "Guardar cambios"}
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       <Dialog open={showTypeInfo} onOpenChange={setShowTypeInfo}>
@@ -338,13 +370,37 @@ function OriginsTab({ readOnly }: { readOnly?: boolean }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <p className="text-sm text-slate-500">Configure los orígenes disponibles al registrar gastos (Orden de compra, Transferencia, etc.).</p>
-        {!readOnly && (
-          <Button className="gap-2" onClick={openAdd}>
-            <Plus className="h-4 w-4" /> Agregar Origen
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            type="button"
+            variant="outline"
+            className="gap-2"
+            disabled={origins.length === 0}
+            onClick={() => {
+              const exportRows = origins.map((o) => ({
+                Nombre: o.name,
+                Estado: o.isActive ? "Activo" : "Inactivo",
+                Orden: o.sortOrder,
+              }));
+              exportRowsToExcel({
+                filename: "origenes_de_gasto",
+                sheetName: "Orígenes",
+                rows: exportRows,
+                columnWidths: [32, 12, 8],
+              });
+            }}
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            Exportar a Excel ({origins.length})
           </Button>
-        )}
+          {!readOnly && (
+            <Button className="gap-2" onClick={openAdd}>
+              <Plus className="h-4 w-4" /> Agregar Origen
+            </Button>
+          )}
+        </div>
       </div>
 
       {isLoading ? (
@@ -566,11 +622,36 @@ function CompaniesTab({ readOnly }: { readOnly?: boolean }) {
             pero los registros existentes siguen mostrando el nombre correcto.
           </p>
         </div>
-        {!readOnly && (
-          <Button className="gap-2 shrink-0" onClick={openAdd}>
-            <Plus className="h-4 w-4" /> Nueva empresa
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            type="button"
+            variant="outline"
+            className="gap-2"
+            disabled={rows.length === 0}
+            onClick={() => {
+              const exportRows = rows.map((r) => ({
+                Código: r.code,
+                Nombre: r.name,
+                Estado: r.isActive ? "Activa" : "Inactiva",
+                Orden: r.sortOrder,
+              }));
+              exportRowsToExcel({
+                filename: "empresas",
+                sheetName: "Empresas",
+                rows: exportRows,
+                columnWidths: [16, 32, 12, 8],
+              });
+            }}
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            Exportar a Excel ({rows.length})
           </Button>
-        )}
+          {!readOnly && (
+            <Button className="gap-2" onClick={openAdd}>
+              <Plus className="h-4 w-4" /> Nueva empresa
+            </Button>
+          )}
+        </div>
       </div>
 
       {isLoading ? (
@@ -723,32 +804,47 @@ function CompaniesTab({ readOnly }: { readOnly?: boolean }) {
 export default function CatalogsPage() {
   const { data: session } = useSession();
   const readOnly = !session?.user?.role || !isAdmin(session.user.role);
-  const [tab, setTab] = useState<"types" | "origins" | "companies">("types");
+  type TabKey =
+    | "types"
+    | "approvals"
+    | "origins"
+    | "companies"
+    | "asset-types"
+    | "zones"
+    | "locations"
+    | "branding";
+  const [tab, setTab] = useState<TabKey>("types");
 
   return (
     <>
-      <Topbar title="Catálogos" />
+      <Topbar title="Mantenimientos" />
       <div className="p-6 space-y-4">
         {readOnly && (
           <Card className="border-amber-200 bg-amber-50">
             <CardContent className="p-3 text-sm text-amber-950">
-              Vista de solo lectura. Solo un administrador puede modificar catálogos.
+              Vista de solo lectura. Solo un administrador puede modificar mantenimientos.
             </CardContent>
           </Card>
         )}
         {/* Tab switcher */}
-        <div className="flex gap-1 border-b">
+        <div className="flex flex-wrap gap-1 border-b">
           {[
-            { key: "types",     label: "Tipos de Gasto" },
-            { key: "origins",   label: "Orígenes" },
+            { key: "types", label: "Tipos de Gasto" },
+            { key: "approvals", label: "Aprobaciones" },
+            { key: "origins", label: "Orígenes" },
             { key: "companies", label: "Empresas" },
-          ].map(t => (
+            { key: "asset-types", label: "Tipos de Activos" },
+            { key: "zones", label: "Zonas" },
+            { key: "locations", label: "Ubicaciones" },
+            { key: "branding", label: "Marca y colores" },
+          ].map((t) => (
             <button
               key={t.key}
-              onClick={() => setTab(t.key as "types" | "origins" | "companies")}
+              type="button"
+              onClick={() => setTab(t.key as TabKey)}
               className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
                 tab === t.key
-                  ? "border-blue-600 text-blue-700"
+                  ? "border-[color:var(--app-primary)] text-[color:var(--app-primary)]"
                   : "border-transparent text-slate-500 hover:text-slate-700"
               }`}
             >
@@ -760,16 +856,40 @@ export default function CatalogsPage() {
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">
-              {tab === "types" ? "Tipos de Gasto" : tab === "origins" ? "Orígenes de Gasto" : "Empresas"}
+              {tab === "types"
+                ? "Tipos de Gasto"
+                : tab === "approvals"
+                  ? "Aprobaciones por tipo de gasto"
+                  : tab === "origins"
+                    ? "Orígenes de Gasto"
+                    : tab === "companies"
+                      ? "Empresas"
+                      : tab === "asset-types"
+                        ? "Tipos de Activos (inventario)"
+                        : tab === "zones"
+                          ? "Zonas"
+                          : tab === "locations"
+                            ? "Ubicaciones"
+                            : "Marca y colores"}
             </CardTitle>
           </CardHeader>
           <CardContent>
             {tab === "types" ? (
               <ExpenseTypesTab readOnly={readOnly} />
+            ) : tab === "approvals" ? (
+              <ExpenseApprovalChainsTab readOnly={readOnly} />
             ) : tab === "origins" ? (
               <OriginsTab readOnly={readOnly} />
-            ) : (
+            ) : tab === "companies" ? (
               <CompaniesTab readOnly={readOnly} />
+            ) : tab === "asset-types" ? (
+              <AssetTypesTab readOnly={readOnly} />
+            ) : tab === "zones" ? (
+              <ZonesTab readOnly={readOnly} />
+            ) : tab === "locations" ? (
+              <LocationsTab readOnly={readOnly} />
+            ) : (
+              <BrandingAppearanceTab readOnly={readOnly} />
             )}
           </CardContent>
         </Card>

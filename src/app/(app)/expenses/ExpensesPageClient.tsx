@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Share2, Eye, Search, Receipt, Pencil, Upload, Download } from "lucide-react";
+import { Plus, Trash2, Eye, Search, Receipt, Pencil, Upload, Download, Paperclip, X } from "lucide-react";
 import { Topbar } from "@/components/layout/Topbar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,27 +17,84 @@ import { toast } from "@/components/ui/toaster";
 import { formatCurrency, formatMonthYear } from "@/lib/utils/format";
 import { companyDisplayName, EXPENSE_BUDGET_LINES, EXPENSE_BUDGET_LINE_LABELS } from "@/lib/utils/constants";
 import { useCompanies } from "@/lib/hooks/use-companies";
+import {
+  DeferredContractSelector,
+  type DeferredContractDraft,
+} from "@/components/expenses/DeferredContractSelector";
 import { canManageExpenses as userCanManageExpenses } from "@/lib/permissions";
-import type { ExpenseBudgetLine, ExpenseType } from "@prisma/client";
+import type { ExpenseApprovalStatus, ExpenseBudgetLine, ExpenseType } from "@prisma/client";
+import * as XLSX from "xlsx";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Contract {
   id: string; licitacionNo: string; client: string; company: string;
   status: string; endDate: string;
 }
+
 interface Distribution {
   contractId: string; licitacionNo: string; client: string; company: string;
   equivalencePct: number; allocatedAmount: number;
 }
 interface ExpenseOrigin { id: string; name: string; isActive: boolean; sortOrder: number; }
+type ExpenseDetailDto = {
+  id: string;
+  deferredIncludeContractIds?: string[];
+  registroCxp?: string | null;
+  registroTr?: string | null;
+  approvals: Array<{
+    id: string;
+    stepOrder: number;
+    decision: string;
+    comment: string | null;
+    decidedAt: string;
+    approver: { name: string };
+  }>;
+  attachments: Array<{
+    id: string;
+    fileName: string;
+    mimeType: string;
+    downloadUrl: string;
+    createdAt: string;
+    uploadedBy: { name: string };
+    note: string | null;
+  }>;
+};
+
+type PreviewableAttachment = {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  downloadUrl: string;
+};
+
+function isPdf(mime: string | undefined, fileName: string) {
+  if (mime && mime.toLowerCase() === "application/pdf") return true;
+  return fileName.toLowerCase().endsWith(".pdf");
+}
+
+function isImage(mime: string | undefined, fileName: string) {
+  if (mime && mime.toLowerCase().startsWith("image/")) return true;
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(fileName);
+}
+
+function isPreviewable(mime: string | undefined, fileName: string) {
+  return isPdf(mime, fileName) || isImage(mime, fileName);
+}
+
 interface Expense {
-  id: string; type: ExpenseType; budgetLine?: ExpenseBudgetLine | null;
+  id: string; sequentialNo?: number | null; type: ExpenseType; budgetLine?: ExpenseBudgetLine | null;
   description: string; amount: number;
   periodMonth: string; isDeferred: boolean; isDistributed: boolean;
+  deferredIncludeContractIds?: string[];
   contractId?: string; positionId?: string; originId?: string; referenceNumber?: string;
   company?: string; notes?: string; createdAt: string;
+  approvalStatus?: ExpenseApprovalStatus;
+  currentApprovalStep?: number | null;
+  requiredApprovalSteps?: number;
+  registroCxp?: string | null;
+  registroTr?: string | null;
   contract?: { id: string; licitacionNo: string; client: string; company: string } | null;
-  position?: { id: string; name: string } | null;
+  position?: { id: string; name: string; location?: { name: string } | null } | null;
   origin?: { id: string; name: string } | null;
   createdBy?: { name: string };
 }
@@ -64,6 +121,96 @@ function budgetLineLabel(b: ExpenseBudgetLine | null | undefined) {
   return EXPENSE_BUDGET_LINE_LABELS[b];
 }
 
+function formatSequentialNo(n: number | null | undefined): string {
+  if (n === null || n === undefined) return "—";
+  return `#${String(n).padStart(5, "0")}`;
+}
+
+function approvalBadge(e: Expense) {
+  const st = e.approvalStatus ?? "APPROVED";
+  const req = e.requiredApprovalSteps ?? 0;
+  if (req <= 0 || st === "APPROVED") {
+    return <Badge variant="success">Compra confirmada</Badge>;
+  }
+  if (st === "REJECTED") return <Badge variant="destructive">Rechazado</Badge>;
+  if (st === "PENDING_APPROVAL") {
+    return (
+      <Badge variant="warning">
+        Pendiente ({e.currentApprovalStep ?? 1}/{req})
+      </Badge>
+    );
+  }
+  if (st === "PARTIALLY_APPROVED") {
+    return (
+      <Badge variant="warning">
+        En aprobación ({e.currentApprovalStep ?? "—"}/{req})
+      </Badge>
+    );
+  }
+  return <Badge variant="secondary">{st}</Badge>;
+}
+
+function AttachmentPreviewDialog({
+  attachment,
+  onOpenChange,
+}: {
+  attachment: PreviewableAttachment | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const open = !!attachment;
+  const inlineUrl = attachment ? `${attachment.downloadUrl}?inline=1` : "";
+  const pdf = attachment ? isPdf(attachment.mimeType, attachment.fileName) : false;
+  const img = attachment ? isImage(attachment.mimeType, attachment.fileName) : false;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-5xl w-[95vw] p-0 overflow-hidden">
+        <DialogHeader className="px-4 py-3 border-b">
+          <DialogTitle className="flex items-center justify-between gap-3 pr-6">
+            <span className="truncate text-sm font-medium" title={attachment?.fileName}>
+              {attachment?.fileName ?? "Previsualización"}
+            </span>
+            {attachment && (
+              <a
+                href={attachment.downloadUrl}
+                className="text-xs text-blue-600 hover:underline shrink-0"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Descargar
+              </a>
+            )}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="bg-slate-100" style={{ height: "80vh" }}>
+          {attachment && pdf && (
+            <iframe
+              src={inlineUrl}
+              title={attachment.fileName}
+              className="w-full h-full bg-white"
+            />
+          )}
+          {attachment && img && (
+            <div className="w-full h-full overflow-auto flex items-center justify-center p-4">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={inlineUrl}
+                alt={attachment.fileName}
+                className="max-w-full max-h-full object-contain"
+              />
+            </div>
+          )}
+          {attachment && !pdf && !img && (
+            <div className="w-full h-full flex items-center justify-center text-sm text-slate-500">
+              No hay previsualización disponible para este formato.
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function currentMonth() {
   const now = new Date();
@@ -71,6 +218,30 @@ function currentMonth() {
 }
 
 const DEFAULT_EXPENSE_LIST_URL = "/api/expenses?pageSize=200";
+
+const ATTACH_ACCEPT = ".pdf,.png,.jpg,.jpeg,.webp,.gif,.xlsx,.xls,.csv";
+const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024;
+
+async function uploadExpenseAttachments(expenseIds: string[], files: File[]): Promise<void> {
+  if (files.length === 0 || expenseIds.length === 0) return;
+  const targets = expenseIds.length > 1 ? [expenseIds[0]!] : expenseIds;
+  for (const expenseId of targets) {
+    for (const file of files) {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        throw new Error(`«${file.name}» supera el máximo de 15 MB`);
+      }
+      const fd = new FormData();
+      fd.set("file", file);
+      const r = await fetch(`/api/expenses/${expenseId}/attachments`, {
+        method: "POST",
+        body: fd,
+        credentials: "same-origin",
+      });
+      const j = (await r.json()) as { error?: { message?: string } };
+      if (!r.ok) throw new Error(j.error?.message ?? `No se pudo subir «${file.name}»`);
+    }
+  }
+}
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function ExpensesPageClient({ initialExpenses }: { initialExpenses: Expense[] }) {
@@ -81,16 +252,21 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
   const companyRows = companiesRes?.data ?? [];
   const activeCompanies = companyRows.filter((c) => c.isActive);
   const expenseFileRef = useRef<HTMLInputElement>(null);
+  const addExpenseAttachRef = useRef<HTMLInputElement>(null);
   const [expenseImporting, setExpenseImporting] = useState(false);
+  /** Archivos a subir después de crear el gasto (modal Agregar) */
+  const [addExpenseFiles, setAddExpenseFiles] = useState<File[]>([]);
 
   // Filters
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState<string>("all");
   const [filterCompany, setFilterCompany] = useState<string>("all");
+  const [filterStatus, setFilterStatus] = useState<string>("all");
 
   // Modals
   const [showForm, setShowForm] = useState(false);
   const [previewExpense, setPreviewExpense] = useState<Expense | null>(null);
+  const [previewAttachment, setPreviewAttachment] = useState<PreviewableAttachment | null>(null);
   const [editExpense, setEditExpense] = useState<Expense | null>(null);
   const [editForm, setEditForm] = useState({
     type: "OTHER" as ExpenseType,
@@ -100,6 +276,8 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
     originId: "",
     referenceNumber: "",
     notes: "",
+    registroCxp: "",
+    registroTr: "",
   });
 
   // Form state
@@ -116,9 +294,15 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
     referenceNumber: "",
     company: "",
     notes: "",
+    registroCxp: "",
+    registroTr: "",
     /** Prorrateo del monto en N meses (solo contrato específico) */
     spreadMonths: 1,
   });
+  /** Reparto diferido al crear: "all" = todos los contratos activos; si no, solo los IDs listados. */
+  const [createDeferredDraft, setCreateDeferredDraft] = useState<DeferredContractDraft>("all");
+  /** Borrador en el modal de detalle / reparto */
+  const [distributionDraft, setDistributionDraft] = useState<DeferredContractDraft>("all");
   const [contractSearch, setContractSearch] = useState("");
   const [contractFocused, setContractFocused] = useState(false);
 
@@ -128,8 +312,9 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
     const sp = new URLSearchParams({ pageSize: "200" });
     if (filterType !== "all") sp.set("type", filterType);
     if (filterCompany !== "all") sp.set("company", filterCompany);
+    if (filterStatus !== "all") sp.set("approvalStatus", filterStatus);
     return `/api/expenses?${sp.toString()}`;
-  }, [filterType, filterCompany]);
+  }, [filterType, filterCompany, filterStatus]);
 
   const { data, isLoading: expensesLoading, isError, error, refetch } = useQuery<{ data: Expense[] }>({
     queryKey: ["expenses", expenseListUrl],
@@ -156,35 +341,107 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
     staleTime: 300000,
   });
 
-  const { data: positionsData } = useQuery<{ data: { id: string; name: string; shift?: string | null; location?: string | null }[] }>({
+  const { data: positionsData } = useQuery<{
+    data: { id: string; name: string; label: string; locationName: string; shifts: { label: string | null; hours: number }[] }[];
+  }>({
     queryKey: ["positions-for-expense", form.contractId],
-    queryFn: () => fetch(`/api/contracts/${form.contractId}/positions`).then(r => r.json()),
+    queryFn: () => fetch(`/api/contracts/${form.contractId}/positions`).then((r) => r.json()),
     enabled: form.mode === "contract" && !!form.contractId,
   });
 
   const { data: previewData, isLoading: previewLoading } = useQuery<{ data: Distribution[] }>({
-    queryKey: ["expense-preview", previewExpense?.id],
-    queryFn: () => fetch(`/api/expenses/${previewExpense!.id}/distribute`).then(r => r.json()),
+    queryKey: ["expense-preview", previewExpense?.id, distributionDraft],
+    queryFn: async () => {
+      const id = previewExpense!.id;
+      const sp = new URLSearchParams();
+      if (distributionDraft !== "all" && distributionDraft.length > 0) {
+        sp.set("contractIds", distributionDraft.join(","));
+      }
+      const q = sp.toString();
+      const r = await fetch(`/api/expenses/${id}/distribute${q ? `?${q}` : ""}`, {
+        credentials: "same-origin",
+      });
+      return r.json();
+    },
+    enabled:
+      !!previewExpense &&
+      previewExpense.isDeferred &&
+      (previewExpense.approvalStatus ?? "APPROVED") !== "REJECTED",
+  });
+
+  const { data: previewDetail, refetch: refetchPreviewDetail } = useQuery({
+    queryKey: ["expense-detail", previewExpense?.id],
+    queryFn: async (): Promise<ExpenseDetailDto> => {
+      const r = await fetch(`/api/expenses/${previewExpense!.id}`, { credentials: "same-origin" });
+      const j = (await r.json()) as { data?: ExpenseDetailDto; error?: { message?: string } };
+      if (!r.ok || !j.data) throw new Error(j.error?.message ?? "Error al cargar detalle");
+      return j.data;
+    },
     enabled: !!previewExpense,
   });
 
+  const allContracts = contractsData?.data ?? [];
+  const deferredAssignableContracts = useMemo(
+    () => allContracts.filter((c) => c.status === "ACTIVE" || c.status === "PROLONGATION"),
+    [allContracts]
+  );
+  const deferredAssignableIds = useMemo(
+    () => deferredAssignableContracts.map((c) => c.id),
+    [deferredAssignableContracts]
+  );
+
+  useEffect(() => {
+    if (!previewExpense?.isDeferred) return;
+    setDistributionDraft("all");
+  }, [previewExpense?.id, previewExpense?.isDeferred]);
+
+  useEffect(() => {
+    if (!previewExpense?.isDeferred || !previewDetail) return;
+    const ids = previewDetail.deferredIncludeContractIds;
+    if (ids === undefined) return;
+    if (ids.length > 0) setDistributionDraft(ids);
+    else setDistributionDraft("all");
+  }, [previewExpense?.id, previewExpense?.isDeferred, previewDetail?.deferredIncludeContractIds]);
+
   // ── Mutations ──────────────────────────────────────────────────────────────
   const createMutation = useMutation({
-    mutationFn: async (body: Record<string, unknown>) => {
+    mutationFn: async (payload: { body: Record<string, unknown>; files: File[] }) => {
+      const { body, files } = payload;
       const r = await fetch("/api/expenses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        credentials: "same-origin",
       });
-      const json = (await r.json()) as { data?: { count?: number }; error?: { message?: string } };
+      const json = (await r.json()) as {
+        data?: { count?: number; expenses?: { id: string }[] };
+        error?: { message?: string };
+      };
       if (!r.ok) {
         throw new Error(json?.error?.message ?? "Error al crear gasto");
       }
-      return json;
+      const ids = json.data?.expenses?.map((e) => e.id).filter(Boolean) ?? [];
+      let uploadWarning: string | null = null;
+      if (files.length > 0 && ids.length > 0) {
+        try {
+          await uploadExpenseAttachments(ids, files);
+        } catch (e) {
+          uploadWarning = e instanceof Error ? e.message : "Error al subir adjuntos";
+        }
+      }
+      return {
+        json,
+        uploadWarning,
+        createdCount: json.data?.count ?? Math.max(1, ids.length),
+      };
     },
     onSuccess: (res) => {
-      const count = res.data?.count ?? 1;
-      toast.success(count > 1 ? `Se registraron ${count} cuotas mensuales` : "Gasto registrado");
+      const count = res.createdCount;
+      if (res.uploadWarning) {
+        toast.error("Gasto guardado, pero hubo un problema con los archivos", res.uploadWarning, { durationMs: 12_000 });
+      } else {
+        toast.success(count > 1 ? `Se registraron ${count} cuotas mensuales` : "Gasto registrado");
+      }
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["profitability"] });
       qc.invalidateQueries({ queryKey: ["traffic-light"] });
@@ -228,23 +485,53 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
     onError: () => toast.error("Error al eliminar"),
   });
 
-  const distributeMutation = useMutation({
-    mutationFn: (id: string) =>
-      fetch(`/api/expenses/${id}/distribute`, { method: "POST" }).then(r => r.json()),
+  const saveDeferredTargetsMutation = useMutation({
+    mutationFn: async ({ id, contractIds }: { id: string; contractIds: string[] }) => {
+      const r = await fetch(`/api/expenses/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deferredIncludeContractIds: contractIds }),
+        credentials: "same-origin",
+      });
+      const json = (await r.json()) as { error?: { message?: string } };
+      if (!r.ok) throw new Error(json.error?.message ?? "Error al guardar el reparto");
+      return json;
+    },
     onSuccess: () => {
-      toast.success("Gasto distribuido correctamente");
+      toast.success("Reparto actualizado");
       qc.invalidateQueries({ queryKey: ["expenses"] });
+      qc.invalidateQueries({ queryKey: ["expense-preview"] });
+      qc.invalidateQueries({ queryKey: ["expense-detail"] });
       qc.invalidateQueries({ queryKey: ["profitability"] });
       qc.invalidateQueries({ queryKey: ["traffic-light"] });
-      setPreviewExpense(null);
+      qc.invalidateQueries({ queryKey: ["contract-deferred-expenses"] });
     },
-    onError: () => toast.error("Error al distribuir"),
+    onError: (e: Error) => toast.error(e.message || "Error al guardar"),
   });
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   function resetForm() {
-    setForm({ type: "OTHER", budgetLine: "", description: "", amount: "", periodMonth: currentMonth(), mode: "contract", contractId: "", positionId: "", originId: "", referenceNumber: "", company: "", notes: "", spreadMonths: 1 });
+    setForm({
+      type: "OTHER",
+      budgetLine: "",
+      description: "",
+      amount: "",
+      periodMonth: currentMonth(),
+      mode: "contract",
+      contractId: "",
+      positionId: "",
+      originId: "",
+      referenceNumber: "",
+      company: "",
+      notes: "",
+      registroCxp: "",
+      registroTr: "",
+      spreadMonths: 1,
+    });
+    setCreateDeferredDraft("all");
     setContractSearch("");
+    setAddExpenseFiles([]);
+    if (addExpenseAttachRef.current) addExpenseAttachRef.current.value = "";
   }
 
   function openEdit(e: Expense) {
@@ -257,6 +544,8 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
       originId: e.originId ?? "",
       referenceNumber: e.referenceNumber ?? "",
       notes: e.notes ?? "",
+      registroCxp: e.registroCxp ?? "",
+      registroTr: e.registroTr ?? "",
     });
   }
 
@@ -276,6 +565,8 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
         originId: editForm.originId || null,
         referenceNumber: editForm.referenceNumber.trim() || null,
         notes: editForm.notes.trim() || null,
+        registroCxp: editForm.registroCxp.trim() || null,
+        registroTr: editForm.registroTr.trim() || null,
       },
     });
   }
@@ -297,27 +588,43 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
         return;
       }
     }
+    if (form.mode === "deferred") {
+      if (createDeferredDraft !== "all" && createDeferredDraft.length === 0) {
+        toast.error("Seleccione al menos un contrato para el reparto");
+        return;
+      }
+    }
 
     createMutation.mutate({
-      type: form.type,
-      budgetLine: form.budgetLine,
-      company: form.company,
-      description: form.description.trim(),
-      amount: parseFloat(form.amount),
-      periodMonth: form.periodMonth,
-      contractId: form.mode === "contract" ? form.contractId : undefined,
-      positionId: form.mode === "contract" && form.positionId ? form.positionId : undefined,
-      originId: form.originId || undefined,
-      referenceNumber: form.referenceNumber.trim() || undefined,
-      isDeferred: form.mode === "deferred",
-      notes: form.notes.trim() || undefined,
-      spreadMonths,
+      body: {
+        type: form.type,
+        budgetLine: form.budgetLine,
+        company: form.company,
+        description: form.description.trim(),
+        amount: parseFloat(form.amount),
+        periodMonth: form.periodMonth,
+        contractId: form.mode === "contract" ? form.contractId : undefined,
+        positionId: form.mode === "contract" && form.positionId ? form.positionId : undefined,
+        originId: form.originId || undefined,
+        referenceNumber: form.referenceNumber.trim() || undefined,
+        isDeferred: form.mode === "deferred",
+        notes: form.notes.trim() || undefined,
+        registroCxp: form.registroCxp.trim() || undefined,
+        registroTr: form.registroTr.trim() || undefined,
+        spreadMonths,
+        ...(form.mode === "deferred"
+          ? {
+              deferredIncludeContractIds:
+                createDeferredDraft === "all" ? [] : createDeferredDraft,
+            }
+          : {}),
+      },
+      files: addExpenseFiles,
     });
   }
 
   // ── Filtered contracts for search ──────────────────────────────────────────
   // The API already filters by assignable=true (server-side, timezone-aware)
-  const allContracts = contractsData?.data ?? [];
 
   const filteredContracts = allContracts.filter(c => {
     const q = contractSearch.toLowerCase();
@@ -348,6 +655,107 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
     a.download = "plantilla_importar_gastos.xlsx";
     a.click();
     URL.revokeObjectURL(a.href);
+  }
+
+  function approvalStatusLabel(e: Expense): string {
+    const st = e.approvalStatus ?? "APPROVED";
+    const req = e.requiredApprovalSteps ?? 0;
+    if (req <= 0 || st === "APPROVED") return "Aprobado";
+    if (st === "REJECTED") return "Rechazado";
+    if (st === "PENDING_APPROVAL")
+      return `Pendiente (${e.currentApprovalStep ?? 1}/${req})`;
+    if (st === "PARTIALLY_APPROVED")
+      return `Aprobado parcial (${e.currentApprovalStep ?? 0}/${req})`;
+    return st;
+  }
+
+  function exportExpensesToExcel() {
+    if (expenses.length === 0) {
+      toast.info("No hay gastos para exportar");
+      return;
+    }
+
+    const rows = expenses.map((e) => {
+      const typeLabel = EXPENSE_TYPES.find((t) => t.value === e.type)?.label ?? e.type;
+      const deferredScope =
+        e.isDeferred
+          ? e.deferredIncludeContractIds && e.deferredIncludeContractIds.length > 0
+            ? `Diferido (${e.deferredIncludeContractIds.length} contratos)`
+            : "Diferido (todos los contratos)"
+          : "Contrato específico";
+
+      return {
+        "N°": formatSequentialNo(e.sequentialNo),
+        Tipo: typeLabel,
+        Partida: budgetLineLabel(e.budgetLine ?? null),
+        Empresa: e.company ? companyDisplayName(e.company, companyRows) : "",
+        Descripción: e.description,
+        "Origen / Ref.": [e.origin?.name, e.referenceNumber].filter(Boolean).join(" · "),
+        Contrato: e.contract?.client ?? "",
+        "N° Licitación": e.contract?.licitacionNo ?? "",
+        "Empresa contrato": e.contract?.company
+          ? companyDisplayName(e.contract.company, companyRows)
+          : "",
+        Puesto: e.position?.name ?? "",
+        Ubicación: e.position?.location?.name ?? "",
+        "Tipo reparto": deferredScope,
+        Período: formatMonthYear(e.periodMonth),
+        Monto: e.amount,
+        "Registro CXP": e.registroCxp ?? "",
+        "Registro TR": e.registroTr ?? "",
+        Estado: approvalStatusLabel(e),
+        Registrado: new Date(e.createdAt).toLocaleString("es-CR"),
+        "Creado por": e.createdBy?.name ?? "",
+        Notas: e.notes ?? "",
+      };
+    });
+
+    const totalRow: Record<string, string | number> = {
+      "N°": "",
+      Tipo: "",
+      Partida: "",
+      Empresa: "",
+      Descripción: "TOTAL",
+      "Origen / Ref.": "",
+      Contrato: "",
+      "N° Licitación": "",
+      "Empresa contrato": "",
+      Puesto: "",
+      Ubicación: "",
+      "Tipo reparto": "",
+      Período: "",
+      Monto: total,
+      "Registro CXP": "",
+      "Registro TR": "",
+      Estado: "",
+      Registrado: "",
+      "Creado por": "",
+      Notas: "",
+    };
+    const exportData = [...rows, totalRow];
+
+    const ws = XLSX.utils.json_to_sheet(exportData);
+    ws["!cols"] = [
+      { wch: 9 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 36 },
+      { wch: 22 }, { wch: 28 }, { wch: 22 }, { wch: 18 },
+      { wch: 20 }, { wch: 20 }, { wch: 26 }, { wch: 12 },
+      { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 22 },
+      { wch: 20 }, { wch: 22 }, { wch: 30 },
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Gastos");
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    const parts = ["gastos", stamp];
+    if (filterType !== "all") {
+      const lbl = EXPENSE_TYPES.find((t) => t.value === filterType)?.label ?? filterType;
+      parts.push(lbl.toLowerCase().replace(/\s+/g, "-"));
+    }
+    if (filterCompany !== "all") {
+      parts.push(filterCompany.toLowerCase());
+    }
+    XLSX.writeFile(wb, `${parts.join("_")}.xlsx`);
   }
 
   async function onExpenseFileSelected(f: File | null) {
@@ -421,34 +829,51 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
               )}
             </p>
           </div>
-          {canEdit && (
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                ref={expenseFileRef}
-                type="file"
-                accept=".xlsx,.xls"
-                className="hidden"
-                onChange={(e) => onExpenseFileSelected(e.target.files?.[0] ?? null)}
-              />
-              <Button type="button" variant="outline" className="gap-2" onClick={downloadExpenseTemplate}>
-                <Download className="h-4 w-4" />
-                Plantilla Excel
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="gap-2"
-                disabled={expenseImporting}
-                onClick={() => expenseFileRef.current?.click()}
-              >
-                <Upload className="h-4 w-4" />
-                {expenseImporting ? "Importando…" : "Importar Excel"}
-              </Button>
-              <Button className="gap-2" onClick={() => setShowForm(true)}>
-                <Plus className="h-4 w-4" /> Agregar Gasto
-              </Button>
-            </div>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2"
+              onClick={exportExpensesToExcel}
+              disabled={expenses.length === 0}
+              title={
+                expenses.length === 0
+                  ? "No hay gastos para exportar"
+                  : "Exportar a Excel los gastos visibles (aplicando filtros y búsqueda)"
+              }
+            >
+              <Download className="h-4 w-4" />
+              Exportar Excel
+            </Button>
+            {canEdit && (
+              <>
+                <input
+                  ref={expenseFileRef}
+                  type="file"
+                  accept=".xlsx,.xls"
+                  className="hidden"
+                  onChange={(e) => onExpenseFileSelected(e.target.files?.[0] ?? null)}
+                />
+                <Button type="button" variant="outline" className="gap-2" onClick={downloadExpenseTemplate}>
+                  <Download className="h-4 w-4" />
+                  Plantilla Excel
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2"
+                  disabled={expenseImporting}
+                  onClick={() => expenseFileRef.current?.click()}
+                >
+                  <Upload className="h-4 w-4" />
+                  {expenseImporting ? "Importando…" : "Importar Excel"}
+                </Button>
+                <Button className="gap-2" onClick={() => setShowForm(true)}>
+                  <Plus className="h-4 w-4" /> Agregar Gasto
+                </Button>
+              </>
+            )}
+          </div>
         </div>
 
         {/* Filters */}
@@ -471,6 +896,15 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                 <SelectContent>
                   <SelectItem value="all">Todas</SelectItem>
                   {companyRows.map((c) => <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select value={filterStatus} onValueChange={setFilterStatus}>
+                <SelectTrigger className="w-44"><SelectValue placeholder="Estado" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos los estados</SelectItem>
+                  <SelectItem value="PENDING">En aprobación</SelectItem>
+                  <SelectItem value="APPROVED">Aprobados</SelectItem>
+                  <SelectItem value="REJECTED">Rechazados</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -501,6 +935,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b bg-slate-50">
+                      <th className="text-left px-4 py-3 font-semibold text-slate-600">N°</th>
                       <th className="text-left px-4 py-3 font-semibold text-slate-600">Tipo</th>
                       <th className="text-left px-4 py-3 font-semibold text-slate-600">Partida</th>
                       <th className="text-left px-4 py-3 font-semibold text-slate-600">Empresa</th>
@@ -519,6 +954,9 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                       const ti = typeInfo(e.type);
                       return (
                         <tr key={e.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-3 font-mono text-xs text-slate-600">
+                            {formatSequentialNo(e.sequentialNo)}
+                          </td>
                           <td className="px-4 py-3">
                             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${ti.color}`}>
                               {ti.label}
@@ -551,12 +989,24 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                               <div>
                                 <div className="font-medium text-slate-700">{e.contract.client}</div>
                                 <div className="text-xs text-slate-400">{e.contract.licitacionNo} · {companyDisplayName(e.contract.company, companyRows)}</div>
-                                {e.position && <div className="text-xs text-blue-500 mt-0.5">Puesto: {e.position.name}</div>}
+                                {e.position && (
+                                  <div className="text-xs text-blue-500 mt-0.5">
+                                    {e.position.location
+                                      ? `${e.position.location.name} › ${e.position.name}`
+                                      : `Puesto: ${e.position.name}`}
+                                  </div>
+                                )}
                               </div>
                             ) : e.isDeferred ? (
                               <div>
-                                <Badge variant="outline">Todos los contratos</Badge>
-                                <div className="text-xs text-slate-400 mt-0.5">Diferido grupal</div>
+                                <Badge variant="outline">
+                                  {e.deferredIncludeContractIds && e.deferredIncludeContractIds.length > 0
+                                    ? `${e.deferredIncludeContractIds.length} contrato(s) en reparto`
+                                    : "Todos los contratos activos"}
+                                </Badge>
+                                <div className="text-xs text-slate-400 mt-0.5">
+                                  Diferido · impacto inmediato al presupuesto
+                                </div>
                               </div>
                             ) : "—"}
                           </td>
@@ -575,17 +1025,29 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                           <td className="px-4 py-3 text-right font-semibold text-slate-800">
                             {formatCurrency(e.amount)}
                           </td>
-                          <td className="px-4 py-3">
+                          <td className="px-4 py-3 space-y-1">
+                            <div>{approvalBadge(e)}</div>
                             {e.isDeferred ? (
-                              e.isDistributed
-                                ? <Badge variant="success">Distribuido</Badge>
-                                : <Badge variant="warning">Pendiente</Badge>
+                              e.isDistributed ? (
+                                <Badge variant="success">En presupuesto</Badge>
+                              ) : (
+                                <Badge variant="outline">Sin reparto (sin contratos elegibles)</Badge>
+                              )
                             ) : (
                               <Badge variant="secondary">Directo</Badge>
                             )}
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1 justify-end">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                title="Detalle, aprobaciones y adjuntos"
+                                onClick={() => setPreviewExpense(e)}
+                              >
+                                <Eye className="h-3.5 w-3.5" />
+                              </Button>
                               {canEdit && (
                                 <Button
                                   type="button"
@@ -598,21 +1060,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                                   <Pencil className="h-3.5 w-3.5" />
                                 </Button>
                               )}
-                              {canEdit && e.isDeferred && !e.isDistributed && (
-                                <Button
-                                  size="sm" variant="outline"
-                                  className="gap-1 text-blue-600 border-blue-200 hover:bg-blue-50"
-                                  onClick={() => setPreviewExpense(e)}
-                                >
-                                  <Share2 className="h-3 w-3" /> Distribuir
-                                </Button>
-                              )}
-                              {e.isDeferred && e.isDistributed && (
-                                <Button size="sm" variant="ghost" onClick={() => setPreviewExpense(e)}>
-                                  <Eye className="h-3 w-3" />
-                                </Button>
-                              )}
-                              {canEdit && !e.isDistributed && (
+                              {canEdit && (
                                 <Button
                                   size="sm" variant="ghost"
                                   className="text-red-500 hover:bg-red-50"
@@ -730,6 +1178,22 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                 value={editForm.description}
                 onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
               />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">Registro 1 CXP</label>
+                <Input
+                  value={editForm.registroCxp}
+                  onChange={(e) => setEditForm((f) => ({ ...f, registroCxp: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">Registro 2 TR</label>
+                <Input
+                  value={editForm.registroTr}
+                  onChange={(e) => setEditForm((f) => ({ ...f, registroTr: e.target.value }))}
+                />
+              </div>
             </div>
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-slate-700">Notas (opcional)</label>
@@ -884,16 +1348,28 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                 <button
                   type="button"
                   className={`flex-1 py-2 text-sm font-medium transition-colors ${form.mode === "contract" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
-                  onClick={() => setForm(f => ({ ...f, mode: "contract" }))}
+                  onClick={() => {
+                    setCreateDeferredDraft("all");
+                    setForm((f) => ({ ...f, mode: "contract" }));
+                  }}
                 >
                   Contrato específico
                 </button>
                 <button
                   type="button"
                   className={`flex-1 py-2 text-sm font-medium transition-colors ${form.mode === "deferred" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
-                  onClick={() => setForm(f => ({ ...f, mode: "deferred", contractId: "", positionId: "", spreadMonths: 1 }))}
+                  onClick={() => {
+                    setCreateDeferredDraft("all");
+                    setForm((f) => ({
+                      ...f,
+                      mode: "deferred",
+                      contractId: "",
+                      positionId: "",
+                      spreadMonths: 1,
+                    }));
+                  }}
                 >
-                  Diferido (todos los contratos)
+                  Diferido (reparto entre contratos)
                 </button>
               </div>
             </div>
@@ -952,7 +1428,12 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                   Puesto <span className="text-slate-400 font-normal">(opcional)</span>
                 </label>
                 {(positionsData?.data ?? []).length === 0 ? (
-                  <p className="text-xs text-slate-400">Este contrato no tiene puestos definidos. <a href={`/contracts/${form.contractId}`} className="text-blue-600 hover:underline" target="_blank">Agregar puestos</a></p>
+                  <p className="text-xs text-slate-400">
+                    Este contrato no tiene puestos en ninguna ubicación.{" "}
+                    <a href={`/contracts/${form.contractId}`} className="text-blue-600 hover:underline" target="_blank">
+                      Agregar en Ubicaciones
+                    </a>
+                  </p>
                 ) : (
                   <Select
                     value={form.positionId || "none"}
@@ -963,9 +1444,12 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">— Sin puesto (contrato general) —</SelectItem>
-                      {(positionsData?.data ?? []).map(p => (
+                      {(positionsData?.data ?? []).map((p) => (
                         <SelectItem key={p.id} value={p.id}>
-                          {p.name}{p.shift ? ` · ${p.shift}` : ""}{p.location ? ` · ${p.location}` : ""}
+                          {p.label}
+                          {p.shifts.length > 0
+                            ? ` (${p.shifts.map((s) => (s.label ? `${s.label} ` : "") + `${s.hours}h`).join(", ")})`
+                            : ""}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1008,13 +1492,103 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
               </div>
             )}
 
-            {/* Deferred info */}
+            {/* Deferred: contratos incluidos en el reparto */}
             {form.mode === "deferred" && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
-                <p className="font-medium mb-0.5">Gasto diferido</p>
-                <p className="text-blue-600 text-xs">Este gasto se distribuirá proporcionalmente entre <strong>todos los contratos activos</strong> del grupo, según el número de puestos de cada contrato.</p>
+              <div className="rounded-lg border border-blue-200 bg-blue-50/80 p-3 text-sm space-y-2">
+                <p className="font-medium text-blue-900">Gasto diferido</p>
+                <p className="text-xs text-blue-800">
+                  El monto <strong>entra de inmediato</strong> al presupuesto de los contratos marcados (proporcional al presupuesto de insumos). Si un aprobador rechaza el gasto, ese impacto se revierte.
+                </p>
+                <p className="text-xs font-medium text-slate-700">Contratos que reciben el reparto</p>
+                <DeferredContractSelector
+                  contracts={deferredAssignableContracts}
+                  allIds={deferredAssignableIds}
+                  draft={createDeferredDraft}
+                  onChange={setCreateDeferredDraft}
+                  companyRows={companyRows}
+                />
               </div>
             )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">Registro 1 CXP (opcional)</label>
+                <Input
+                  placeholder="Referencia CXP…"
+                  value={form.registroCxp}
+                  onChange={(e) => setForm((f) => ({ ...f, registroCxp: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">Registro 2 TR (opcional)</label>
+                <Input
+                  placeholder="Referencia TR…"
+                  value={form.registroTr}
+                  onChange={(e) => setForm((f) => ({ ...f, registroTr: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            {/* Adjuntos (se suben al guardar, tras crear el gasto) */}
+            <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+              <div className="flex items-center gap-2">
+                <Paperclip className="h-4 w-4 text-slate-500 shrink-0" />
+                <label className="text-sm font-medium text-slate-700">Archivos adjuntos (opcional)</label>
+              </div>
+              <input
+                ref={addExpenseAttachRef}
+                type="file"
+                multiple
+                accept={ATTACH_ACCEPT}
+                className="hidden"
+                onChange={(e) => {
+                  const picked = Array.from(e.target.files ?? []);
+                  setAddExpenseFiles((prev) => [...prev, ...picked]);
+                  e.target.value = "";
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => addExpenseAttachRef.current?.click()}
+              >
+                <Upload className="h-3.5 w-3.5" />
+                Elegir archivos
+              </Button>
+              {addExpenseFiles.length > 0 ? (
+                <ul className="text-xs space-y-1.5 max-h-28 overflow-y-auto">
+                  {addExpenseFiles.map((f, i) => (
+                    <li
+                      key={`${f.name}-${i}-${f.size}`}
+                      className="flex items-center justify-between gap-2 rounded border bg-white px-2 py-1.5"
+                    >
+                      <span className="truncate text-slate-700" title={f.name}>
+                        {f.name}
+                        <span className="text-slate-400"> · {(f.size / 1024).toFixed(0)} KB</span>
+                      </span>
+                      <button
+                        type="button"
+                        className="shrink-0 rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                        aria-label={`Quitar ${f.name}`}
+                        onClick={() => setAddExpenseFiles((prev) => prev.filter((_, j) => j !== i))}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-slate-500">PDF, imágenes, Excel o CSV. Máx. 15 MB por archivo.</p>
+              )}
+              {form.mode === "contract" && form.spreadMonths > 1 && (
+                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded px-2 py-1.5">
+                  Con prorrateo en varios meses, los adjuntos se asocian al <strong>primer</strong> mes generado;
+                  puede abrir las demás cuotas desde la tabla y añadir más desde el detalle.
+                </p>
+              )}
+            </div>
 
             {/* Notes */}
             <div className="space-y-1.5">
@@ -1032,7 +1606,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
             <DialogFooter className="gap-2 sm:gap-0">
               <Button variant="outline" onClick={() => { setShowForm(false); resetForm(); }}>Cancelar</Button>
               <Button onClick={handleSubmit} disabled={createMutation.isPending}>
-                {createMutation.isPending ? "Guardando..." : "Guardar Gasto"}
+                {createMutation.isPending ? "Guardando…" : "Guardar Gasto"}
               </Button>
             </DialogFooter>
           </div>
@@ -1044,8 +1618,15 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
         <DialogContent className="max-w-2xl max-h-[min(90vh,900px)] flex flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
           <div className="px-6 pt-6 pb-4 shrink-0">
             <DialogHeader>
-              <DialogTitle>
-                {previewExpense?.isDistributed ? "Detalle de distribución" : "Distribuir gasto proporcionalmente"}
+              <DialogTitle className="flex items-center gap-2">
+                <span>
+                  {previewExpense?.isDeferred ? "Gasto diferido — reparto y detalle" : "Detalle del gasto"}
+                </span>
+                {previewExpense?.sequentialNo != null && (
+                  <span className="text-xs font-mono text-slate-500 font-normal">
+                    {formatSequentialNo(previewExpense.sequentialNo)}
+                  </span>
+                )}
               </DialogTitle>
             </DialogHeader>
           </div>
@@ -1057,53 +1638,194 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                 <div><span className="text-slate-500">Monto:</span> <span className="font-semibold ml-1">{formatCurrency(previewExpense.amount)}</span></div>
                 <div><span className="text-slate-500">Empresa:</span> <span className="font-medium ml-1">{previewExpense.company ? companyDisplayName(previewExpense.company, companyRows) : "—"}</span></div>
                 <div><span className="text-slate-500">Período:</span> <span className="font-medium ml-1">{formatMonthYear(previewExpense.periodMonth)}</span></div>
+                <div className="col-span-2">{approvalBadge(previewExpense)}</div>
               </div>
 
-              {previewLoading ? (
-                <div className="text-center py-6 text-slate-400">Calculando distribución...</div>
-              ) : (
-                <div className="border rounded-lg overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-slate-50 border-b">
-                        <th className="text-left px-4 py-2.5 font-semibold text-slate-600">Contrato</th>
-                        <th className="text-left px-4 py-2.5 font-semibold text-slate-600">Empresa</th>
-                        <th className="text-right px-4 py-2.5 font-semibold text-slate-600">Equiv. %</th>
-                        <th className="text-right px-4 py-2.5 font-semibold text-slate-600">Monto asignado</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {(previewData?.data ?? []).map(d => (
-                        <tr key={d.contractId} className="hover:bg-slate-50">
-                          <td className="px-4 py-2.5">
-                            <div className="font-medium">{d.client}</div>
-                            <div className="text-xs text-slate-400">{d.licitacionNo}</div>
-                          </td>
-                          <td className="px-4 py-2.5 text-slate-500 text-sm">
-                            {companyDisplayName(d.company, companyRows)}
-                          </td>
-                          <td className="px-4 py-2.5 text-right text-slate-600">
-                            {(d.equivalencePct * 100).toFixed(2)}%
-                          </td>
-                          <td className="px-4 py-2.5 text-right font-semibold">
-                            {formatCurrency(d.allocatedAmount)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t bg-slate-50">
-                        <td colSpan={2} className="px-4 py-2.5 font-semibold text-slate-700">Total</td>
-                        <td className="px-4 py-2.5 text-right font-semibold text-slate-600">
-                          {((previewData?.data ?? []).reduce((s, d) => s + d.equivalencePct, 0) * 100).toFixed(2)}%
-                        </td>
-                        <td className="px-4 py-2.5 text-right font-bold text-slate-900">
-                          {formatCurrency((previewData?.data ?? []).reduce((s, d) => s + d.allocatedAmount, 0))}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
+              {previewExpense.isDeferred &&
+                (previewExpense.approvalStatus ?? "APPROVED") !== "APPROVED" &&
+                (previewExpense.approvalStatus ?? "APPROVED") !== "REJECTED" && (
+                  <div className="rounded-md border border-blue-200 bg-blue-50 text-blue-950 text-sm p-3">
+                    Este gasto ya impacta el presupuesto según el reparto indicado. Los aprobadores pueden ver el efecto antes de confirmar. Si alguien rechaza el gasto, el impacto se revierte.
+                  </div>
+                )}
+
+              {previewDetail?.registroCxp || previewDetail?.registroTr ? (
+                <div className="rounded-lg border p-3 text-sm space-y-1 bg-white">
+                  <p className="font-medium text-slate-800">Registros</p>
+                  {previewDetail.registroCxp && (
+                    <div>
+                      <span className="text-slate-500">Registro 1 CXP:</span> {previewDetail.registroCxp}
+                    </div>
+                  )}
+                  {previewDetail.registroTr && (
+                    <div>
+                      <span className="text-slate-500">Registro 2 TR:</span> {previewDetail.registroTr}
+                    </div>
+                  )}
                 </div>
+              ) : null}
+
+              {previewDetail && previewDetail.approvals.length > 0 && (
+                <div className="rounded-lg border p-3 text-sm bg-white">
+                  <p className="font-medium text-slate-800 mb-2">Aprobaciones</p>
+                  <ul className="space-y-1 text-xs text-slate-700">
+                    {previewDetail.approvals.map((a) => (
+                      <li key={a.id}>
+                        Paso {a.stepOrder} · {a.approver.name} · {a.decision === "APPROVED" ? "Aprobado" : "Rechazado"}
+                        {a.comment ? ` — ${a.comment}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="rounded-lg border p-3 text-sm space-y-2 bg-white">
+                <p className="font-medium text-slate-800">Documentación</p>
+                {previewDetail?.attachments?.length ? (
+                  <ul className="text-xs space-y-1">
+                    {previewDetail.attachments.map((att) => {
+                      const canPreview = isPreviewable(att.mimeType, att.fileName);
+                      return (
+                        <li key={att.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                          {canPreview ? (
+                            <button
+                              type="button"
+                              className="text-blue-600 hover:underline text-left"
+                              onClick={() =>
+                                setPreviewAttachment({
+                                  id: att.id,
+                                  fileName: att.fileName,
+                                  mimeType: att.mimeType,
+                                  downloadUrl: att.downloadUrl,
+                                })
+                              }
+                              title="Previsualizar"
+                            >
+                              {att.fileName}
+                            </button>
+                          ) : (
+                            <a
+                              href={att.downloadUrl}
+                              className="text-blue-600 hover:underline"
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {att.fileName}
+                            </a>
+                          )}
+                          {canPreview && (
+                            <a
+                              href={att.downloadUrl}
+                              className="text-[11px] text-slate-500 hover:text-slate-700 hover:underline"
+                              target="_blank"
+                              rel="noreferrer"
+                              title="Descargar"
+                            >
+                              descargar
+                            </a>
+                          )}
+                          <span className="text-slate-400">· {att.uploadedBy.name}</span>
+                          {att.note ? <span className="text-slate-500">— {att.note}</span> : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-slate-500">Sin archivos adjuntos.</p>
+                )}
+                <input
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.xlsx,.xls,.csv"
+                  className="text-xs w-full"
+                  onChange={async (ev) => {
+                    const f = ev.target.files?.[0];
+                    if (!f) return;
+                    const fd = new FormData();
+                    fd.set("file", f);
+                    const r = await fetch(`/api/expenses/${previewExpense.id}/attachments`, {
+                      method: "POST",
+                      body: fd,
+                      credentials: "same-origin",
+                    });
+                    const j = (await r.json()) as { error?: { message?: string } };
+                    if (!r.ok) {
+                      toast.error(j.error?.message ?? "Error al subir");
+                    } else {
+                      toast.success("Archivo adjuntado");
+                      refetchPreviewDetail();
+                      qc.invalidateQueries({ queryKey: ["expenses"] });
+                    }
+                    ev.target.value = "";
+                  }}
+                />
+              </div>
+
+              {previewExpense.isDeferred && (previewExpense.approvalStatus ?? "APPROVED") !== "REJECTED" && (
+                <>
+                  <div className="rounded-lg border bg-white p-3 text-sm space-y-2">
+                    <p className="font-medium text-slate-800">Contratos incluidos en el reparto</p>
+                    <p className="text-xs text-slate-500">
+                      Solo los marcados reciben el gasto. Los porcentajes suman 100 % entre los seleccionados (peso = presupuesto de insumos de cada contrato).
+                    </p>
+                    <DeferredContractSelector
+                      contracts={deferredAssignableContracts}
+                      allIds={deferredAssignableIds}
+                      draft={distributionDraft}
+                      onChange={setDistributionDraft}
+                      companyRows={companyRows}
+                      listClassName="max-h-40 overflow-y-auto space-y-2 rounded-md border p-2 bg-slate-50/80"
+                    />
+                  </div>
+                  {previewLoading ? (
+                    <div className="text-center py-6 text-slate-400">Calculando distribución...</div>
+                  ) : (
+                    <div className="border rounded-lg overflow-hidden">
+                      <p className="text-xs text-slate-500 px-3 py-2 bg-slate-50 border-b">
+                        Vista del reparto (según selección arriba; guarde para aplicar cambios al presupuesto)
+                      </p>
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-slate-50 border-b">
+                            <th className="text-left px-4 py-2.5 font-semibold text-slate-600">Contrato</th>
+                            <th className="text-left px-4 py-2.5 font-semibold text-slate-600">Empresa</th>
+                            <th className="text-right px-4 py-2.5 font-semibold text-slate-600">Equiv. %</th>
+                            <th className="text-right px-4 py-2.5 font-semibold text-slate-600">Monto asignado</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {(previewData?.data ?? []).map((d) => (
+                            <tr key={d.contractId} className="hover:bg-slate-50">
+                              <td className="px-4 py-2.5">
+                                <div className="font-medium">{d.client}</div>
+                                <div className="text-xs text-slate-400">{d.licitacionNo}</div>
+                              </td>
+                              <td className="px-4 py-2.5 text-slate-500 text-sm">
+                                {companyDisplayName(d.company, companyRows)}
+                              </td>
+                              <td className="px-4 py-2.5 text-right text-slate-600">
+                                {(d.equivalencePct * 100).toFixed(2)}%
+                              </td>
+                              <td className="px-4 py-2.5 text-right font-semibold">
+                                {formatCurrency(d.allocatedAmount)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t bg-slate-50">
+                            <td colSpan={2} className="px-4 py-2.5 font-semibold text-slate-700">Total</td>
+                            <td className="px-4 py-2.5 text-right font-semibold text-slate-600">
+                              {((previewData?.data ?? []).reduce((s, d) => s + d.equivalencePct, 0) * 100).toFixed(2)}%
+                            </td>
+                            <td className="px-4 py-2.5 text-right font-bold text-slate-900">
+                              {formatCurrency((previewData?.data ?? []).reduce((s, d) => s + d.allocatedAmount, 0))}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -1111,19 +1833,41 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
           <div className="shrink-0 border-t bg-background px-6 py-4">
             <DialogFooter className="gap-2 sm:gap-0">
               <Button variant="outline" onClick={() => setPreviewExpense(null)}>Cerrar</Button>
-              {canEdit && previewExpense && !previewExpense.isDistributed && (
-                <Button
-                  onClick={() => distributeMutation.mutate(previewExpense.id)}
-                  disabled={distributeMutation.isPending || previewLoading}
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  {distributeMutation.isPending ? "Distribuyendo..." : "Confirmar distribución"}
-                </Button>
-              )}
+              {canEdit &&
+                previewExpense &&
+                previewExpense.isDeferred &&
+                (previewExpense.approvalStatus ?? "APPROVED") !== "REJECTED" && (
+                  <Button
+                    onClick={() => {
+                      if (distributionDraft !== "all" && distributionDraft.length === 0) {
+                        toast.error("Seleccione al menos un contrato para el reparto");
+                        return;
+                      }
+                      const ids = distributionDraft === "all" ? [] : distributionDraft;
+                      saveDeferredTargetsMutation.mutate({
+                        id: previewExpense.id,
+                        contractIds: ids,
+                      });
+                    }}
+                    disabled={
+                      saveDeferredTargetsMutation.isPending ||
+                      previewLoading ||
+                      (distributionDraft !== "all" && distributionDraft.length === 0)
+                    }
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    {saveDeferredTargetsMutation.isPending ? "Guardando…" : "Guardar reparto"}
+                  </Button>
+                )}
             </DialogFooter>
           </div>
         </DialogContent>
       </Dialog>
+
+      <AttachmentPreviewDialog
+        attachment={previewAttachment}
+        onOpenChange={(open) => { if (!open) setPreviewAttachment(null); }}
+      />
     </>
   );
 }

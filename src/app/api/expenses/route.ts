@@ -1,11 +1,13 @@
 import { NextRequest } from "next/server";
-import { Prisma, ExpenseType } from "@prisma/client";
+import { Prisma, ExpenseType, type ExpenseApprovalStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getSession, canManageExpenses } from "@/lib/api/middleware";
 import { listExpensesForSession } from "@/lib/server/expenses-list";
 import { ok, created, badRequest, unauthorized, forbidden, serverError } from "@/lib/api/response";
 import { expenseCreateSchema } from "@/lib/validations/expense.schema";
 import { requireCompanyCode } from "@/lib/server/companies";
+import { getApprovalStepCountForType, initialApprovalFields } from "@/lib/server/expense-approval";
+import { applyDeferredExpenseDistributions } from "@/lib/server/deferred-expense-distribution";
 
 function prismaErrorHint(err: unknown): string | null {
   const msg = err instanceof Error ? err.message : String(err);
@@ -49,13 +51,55 @@ export async function GET(req: NextRequest) {
     const isDeferredParam = searchParams.get("isDeferred");
     const company = searchParams.get("company");
     const type = searchParams.get("type") as ExpenseType | null;
+    const approvalStatusParam = searchParams.get("approvalStatus");
+    const approvalStatus =
+      approvalStatusParam && approvalStatusParam !== "all"
+        ? (approvalStatusParam as ExpenseApprovalStatus | "PENDING")
+        : null;
+    const q = searchParams.get("q")?.trim();
     const page = parseInt(searchParams.get("page") ?? "1");
     const pageSize = parseInt(searchParams.get("pageSize") ?? "50");
+    const limitParam = searchParams.get("limit");
+
+    // Lightweight search endpoint used by pickers (e.g. inventory intake)
+    if (q) {
+      const where: Prisma.ExpenseWhereInput = {
+        OR: [
+          { description: { contains: q, mode: "insensitive" } },
+          { referenceNumber: { contains: q, mode: "insensitive" } },
+          { registroCxp: { contains: q, mode: "insensitive" } },
+        ],
+      };
+      if (company) where.company = company;
+      if (contractId) where.contractId = contractId;
+      const take = Math.min(parseInt(limitParam ?? "15", 10), 50);
+      const rows = await prisma.expense.findMany({
+        where,
+        select: {
+          id: true,
+          sequentialNo: true,
+          description: true,
+          referenceNumber: true,
+          registroCxp: true,
+          amount: true,
+          periodMonth: true,
+          type: true,
+        },
+        orderBy: { createdAt: "desc" },
+        take,
+      });
+      return ok(
+        rows.map((r) => ({ ...r, amount: parseFloat(r.amount.toString()) })),
+      );
+    }
 
     // Special case: fetch deferred expenses that have been distributed to a specific contract
     if (distributedTo && isDeferredParam === "true") {
       const dists = await prisma.expenseDistribution.findMany({
-        where: { contractId: distributedTo },
+        where: {
+          contractId: distributedTo,
+          expense: { approvalStatus: { not: "REJECTED" } },
+        },
         include: {
           expense: {
             include: {
@@ -84,6 +128,7 @@ export async function GET(req: NextRequest) {
       contractId,
       company,
       type,
+      approvalStatus,
     });
 
     return ok(result.data, result.meta);
@@ -116,14 +161,39 @@ export async function POST(req: NextRequest) {
       company,
       isDeferred,
       notes,
+      registroCxp,
+      registroTr,
+      deferredIncludeContractIds: rawDeferredContractIds,
     } = parsed.data;
+
+    const deferredIncludeContractIds =
+      isDeferred && rawDeferredContractIds && rawDeferredContractIds.length > 0
+        ? rawDeferredContractIds
+        : [];
 
     const companyOk = await requireCompanyCode(prisma, company, { mustBeActive: true });
     if (!companyOk.ok) return badRequest(companyOk.message);
 
+    if (isDeferred && deferredIncludeContractIds.length > 0) {
+      const okIds = await prisma.contract.findMany({
+        where: {
+          id: { in: deferredIncludeContractIds },
+          status: { in: ["ACTIVE", "PROLONGATION"] },
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+      if (okIds.length !== deferredIncludeContractIds.length) {
+        return badRequest("Algunos contratos no son válidos o no están activos para reparto");
+      }
+    }
+
     const spreadMonths = isDeferred ? 1 : rawSpread;
     const [year, month] = periodMonth.split("-").map(Number);
     const start = new Date(year, month - 1, 1);
+
+    const stepCount = await getApprovalStepCountForType(type);
+    const approval = initialApprovalFields(stepCount);
 
     const common = {
       type,
@@ -135,7 +205,13 @@ export async function POST(req: NextRequest) {
       company,
       isDeferred,
       notes: notes || null,
+      registroCxp: registroCxp?.trim() || null,
+      registroTr: registroTr?.trim() || null,
       createdById: session.user.id,
+      approvalStatus: approval.approvalStatus,
+      currentApprovalStep: approval.currentApprovalStep,
+      requiredApprovalSteps: approval.requiredApprovalSteps,
+      deferredIncludeContractIds: isDeferred ? deferredIncludeContractIds : [],
     };
 
     const include = {
@@ -153,8 +229,16 @@ export async function POST(req: NextRequest) {
         },
         include,
       });
+      if (isDeferred) {
+        await applyDeferredExpenseDistributions(prisma, expense.id);
+      }
+      const fresh = await prisma.expense.findUnique({
+        where: { id: expense.id },
+        include,
+      });
+      const row = fresh ?? expense;
       return created({
-        expenses: [{ ...expense, amount: parseFloat(expense.amount.toString()) }],
+        expenses: [{ ...row, amount: parseFloat(row.amount.toString()) }],
         count: 1,
       });
     }
@@ -175,8 +259,20 @@ export async function POST(req: NextRequest) {
       )
     );
 
+    for (const row of createdRows) {
+      if (isDeferred) {
+        await applyDeferredExpenseDistributions(prisma, row.id);
+      }
+    }
+    const ids = createdRows.map((r) => r.id);
+    const refreshed = await prisma.expense.findMany({ where: { id: { in: ids } }, include });
+    const byId = new Map(refreshed.map((e) => [e.id, e]));
+
     return created({
-      expenses: createdRows.map((e) => ({ ...e, amount: parseFloat(e.amount.toString()) })),
+      expenses: createdRows.map((e) => {
+        const r = byId.get(e.id) ?? e;
+        return { ...r, amount: parseFloat(r.amount.toString()) };
+      }),
       count: createdRows.length,
     });
   } catch (e) {

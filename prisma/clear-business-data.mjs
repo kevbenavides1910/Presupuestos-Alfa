@@ -22,7 +22,9 @@ async function main() {
     await tx.auditFinding.deleteMany();
     await tx.billingHistory.deleteMany();
     await tx.contractPeriod.deleteMany();
+    await tx.positionShift.deleteMany();
     await tx.position.deleteMany();
+    await tx.contractLocation.deleteMany();
     await tx.auditLog.deleteMany();
     await tx.contract.deleteMany();
   });

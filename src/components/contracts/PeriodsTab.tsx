@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation"; // 👈 Nueva importación
-import { Plus, Calendar } from "lucide-react";
+import { Plus, Calendar, FileSpreadsheet } from "lucide-react";
+import { exportRowsToExcel } from "@/lib/utils/excel-export";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
@@ -63,12 +64,39 @@ export function PeriodsTab({ contractId, periods, readOnly }: Props) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="font-semibold text-slate-800">Historial de Prórrogas</h3>
-        {!readOnly && (
-          <Button size="sm" className="gap-1.5" onClick={() => setOpen(true)}>
-            <Plus className="h-4 w-4" />
-            Agregar Prórroga
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            disabled={periods.length === 0}
+            onClick={() => {
+              const exportRows = periods.map((p) => ({
+                "Prórroga #": p.periodNumber,
+                "Inicio": formatDate(p.startDate),
+                "Cierre": formatDate(p.endDate),
+                "Facturación mensual": p.monthlyBilling,
+                Notas: p.notes ?? "",
+              }));
+              exportRowsToExcel({
+                filename: `prorrogas_contrato_${contractId}`,
+                sheetName: "Prórrogas",
+                rows: exportRows,
+                columnWidths: [12, 14, 14, 22, 40],
+              });
+            }}
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            Exportar a Excel ({periods.length})
           </Button>
-        )}
+          {!readOnly && (
+            <Button size="sm" className="gap-1.5" onClick={() => setOpen(true)}>
+              <Plus className="h-4 w-4" />
+              Agregar Prórroga
+            </Button>
+          )}
+        </div>
       </div>
 
       {periods.length === 0 ? (

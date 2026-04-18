@@ -1,64 +1,49 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getSession, canModifyContracts } from "@/lib/api/middleware";
-import { ok, created, badRequest, unauthorized, forbidden, serverError } from "@/lib/api/response";
-import { z } from "zod";
+import { getSession } from "@/lib/api/middleware";
+import { ok, unauthorized, notFound, serverError } from "@/lib/api/response";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-const positionSchema = z.object({
-  name: z.string().min(2, "Nombre del puesto requerido"),
-  description: z.string().optional(),
-  shift: z.string().optional(),
-  location: z.string().optional(),
-});
-
+/** Listado plano de puestos del contrato (p. ej. selector en gastos): «Ubicación › Puesto». */
 export async function GET(_req: NextRequest, { params }: Ctx) {
   const session = await getSession();
   if (!session) return unauthorized();
 
-  const { id } = await params;
+  const { id: contractId } = await params;
   try {
+    const contract = await prisma.contract.findFirst({
+      where: { id: contractId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!contract) return notFound();
+
     const positions = await prisma.position.findMany({
-      where: { contractId: id },
+      where: { location: { contractId } },
       include: {
-        expenses: {
-          select: { id: true, amount: true, type: true, description: true, periodMonth: true },
-          orderBy: { createdAt: "desc" },
-        },
+        location: { select: { id: true, name: true } },
+        shifts: { orderBy: { sortOrder: "asc" } },
       },
-      orderBy: { name: "asc" },
+      orderBy: [{ location: { name: "asc" } }, { name: "asc" }],
     });
 
-    const serialized = positions.map(p => ({
-      ...p,
-      totalExpenses: p.expenses.reduce((s, e) => s + parseFloat(e.amount.toString()), 0),
-      expenses: p.expenses.map(e => ({ ...e, amount: parseFloat(e.amount.toString()) })),
+    const data = positions.map((p) => ({
+      id: p.id,
+      name: p.name,
+      description: p.description,
+      locationId: p.locationId,
+      locationName: p.location.name,
+      shifts: p.shifts.map((s) => ({
+        id: s.id,
+        label: s.label,
+        hours: parseFloat(s.hours.toString()),
+        sortOrder: s.sortOrder,
+      })),
+      label: `${p.location.name} › ${p.name}`,
     }));
 
-    return ok(serialized);
+    return ok(data);
   } catch (e) {
     return serverError("Error al obtener puestos", e);
-  }
-}
-
-export async function POST(req: NextRequest, { params }: Ctx) {
-  const session = await getSession();
-  if (!session) return unauthorized();
-  if (!canModifyContracts(session.user.role)) return forbidden();
-
-  const { id } = await params;
-  try {
-    const body = await req.json();
-    const parsed = positionSchema.safeParse(body);
-    if (!parsed.success) return badRequest("Datos inválidos", parsed.error.flatten());
-
-    const position = await prisma.position.create({
-      data: { ...parsed.data, contractId: id },
-    });
-
-    return created(position);
-  } catch (e) {
-    return serverError("Error al crear puesto", e);
   }
 }

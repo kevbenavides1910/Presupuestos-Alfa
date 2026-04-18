@@ -29,6 +29,18 @@ services:
       dockerfile: Dockerfile
     container_name: security_contracts_app
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/login',{signal:AbortSignal.timeout(8000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     ports:
       - "${APP_PORT:-3000}:3000"
     environment:
@@ -37,6 +49,10 @@ services:
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
       TZ: ${TZ:-America/Costa_Rica}
       NODE_ENV: production
+      # Adjuntos de gastos (PDF/imágenes/Excel). Monte un volumen en esta ruta para persistencia.
+      EXPENSE_UPLOAD_DIR: /data/expense-uploads
+    volumes:
+      - expense_uploads:/data/expense-uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -45,3 +61,4 @@ services:
 
 volumes:
   postgres_data:
+  expense_uploads:
