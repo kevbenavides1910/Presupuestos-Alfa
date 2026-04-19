@@ -39,10 +39,22 @@ function resolveAuthSecret(): string | undefined {
   return undefined;
 }
 
+/**
+ * Solo usar cookies "Secure" cuando la app realmente se sirve por HTTPS.
+ * Si está detrás de Nginx/Caddy con TLS, NEXTAUTH_URL debe empezar con https://.
+ * Si se accede por HTTP plano (ej. http://IP:3000) hay que dejarlas no-secure
+ * porque el navegador descarta cookies Secure en conexiones HTTP y nunca se loguea.
+ */
+function shouldUseSecureCookies(): boolean {
+  const url = process.env.NEXTAUTH_URL?.trim().toLowerCase();
+  if (!url) return false;
+  return url.startsWith("https://");
+}
+
 export const authOptions: NextAuthOptions = {
   // JWT + credenciales: no hace falta PrismaAdapter; evita que NextAuth toque la BD en rutas como /api/auth/session.
   secret: resolveAuthSecret(),
-  useSecureCookies: process.env.NODE_ENV === "production",
+  useSecureCookies: shouldUseSecureCookies(),
   session: { strategy: "jwt" },
   pages: { signIn: "/login" },
   providers: [
