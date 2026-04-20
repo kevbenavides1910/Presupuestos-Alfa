@@ -28,6 +28,44 @@ export function readFirstSheetAsObjects(
   return rows;
 }
 
+/**
+ * Lee múltiples hojas de un mismo workbook. Para cada nombre lógico solicitado
+ * intenta encontrar la hoja por alias (case-insensitive). Devuelve `null` para
+ * hojas no encontradas para que el caller decida si son obligatorias.
+ *
+ * Ejemplo:
+ *   readSheetsByAliases(buf, { historial: ["Historial"], stats: ["Estadisticas", "Estadísticas", "Tratamiento"] })
+ */
+export function readSheetsByAliases<K extends string>(
+  buffer: ArrayBuffer,
+  aliases: Record<K, string[]>,
+): Record<K, Record<string, unknown>[] | null> {
+  const wb = XLSX.read(buffer, { type: "array", cellDates: true, raw: true });
+  const out = {} as Record<K, Record<string, unknown>[] | null>;
+  for (const key of Object.keys(aliases) as K[]) {
+    const candidates = aliases[key];
+    let sheetName: string | undefined;
+    for (const c of candidates) {
+      const want = c.trim().toLowerCase();
+      const found = wb.SheetNames.find((n) => n.trim().toLowerCase() === want);
+      if (found) {
+        sheetName = found;
+        break;
+      }
+    }
+    if (!sheetName) {
+      out[key] = null;
+      continue;
+    }
+    const sheet = wb.Sheets[sheetName];
+    out[key] = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+      defval: "",
+      raw: true,
+    });
+  }
+  return out;
+}
+
 /** Normaliza claves de encabezado para buscar alias (minúsculas, sin acentos, espacios → _). */
 export function normalizeHeaderKey(k: string): string {
   return k

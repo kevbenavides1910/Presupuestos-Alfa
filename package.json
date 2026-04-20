@@ -23,6 +23,7 @@
     "db:reset-admin-passwords": "node prisma/reset-admin-password.js",
     "db:clear-business": "ts-node prisma/clear-business-data.ts",
     "db:clear-business:prod": "node prisma/clear-business-data.mjs",
+    "db:clear-disciplinary": "ts-node prisma/clear-disciplinary-data.ts",
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset"
   },

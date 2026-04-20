@@ -101,6 +101,32 @@ enum AssetIssueReason {
   OTHER
 }
 
+// ─── Módulo disciplinario ──────────────────────────────────────────────────────
+
+/// Estado registral del apercibimiento (lo que reporta la app de escritorio).
+enum DisciplinaryStatus {
+  EMITIDO
+  ENTREGADO
+  FIRMADO
+  ANULADO
+}
+
+/// Vigencia recalculada por el servidor para asegurar consistencia entre clientes.
+enum DisciplinaryVigencia {
+  VIGENTE
+  VENCIDO
+  PRESCRITO
+  FINALIZADO
+  ANULADO
+}
+
+/// Acción registrada en un ciclo cerrado de tratamiento.
+enum DisciplinaryCycleAccion {
+  COBRADO
+  DADO_DE_BAJA
+  OTRO
+}
+
 // ─── Catálogo de empresas (código estable en mayúsculas, ej. ALFA) ─────────────
 
 model Company {
@@ -144,6 +170,7 @@ model User {
   expenseTypeApprovalSteps ExpenseTypeApprovalStep[] @relation("ExpenseTypeApprovalApprover")
   expenseApprovals         ExpenseApproval[]           @relation("ExpenseApprovalApprover")
   expenseAttachments       ExpenseAttachment[]         @relation("ExpenseAttachmentUploader")
+  disciplinaryBatches      DisciplinaryImportBatch[]   @relation("DisciplinaryBatchUploader")
 
   @@map("users")
 }
@@ -731,6 +758,159 @@ model AssetMovement {
   @@index([type])
   @@index([createdAt])
   @@map("asset_movements")
+}
+
+// ─── Módulo disciplinario ──────────────────────────────────────────────────────
+
+/// Lote de importación de Excel (auditoría: quién subió, cuántas filas).
+model DisciplinaryImportBatch {
+  id              String   @id @default(cuid())
+  filename        String
+  /// SHA-256 del contenido del archivo subido. Se usa para detectar archivos
+  /// repetidos (byte a byte) y rechazarlos sin reprocesarlos. Unique.
+  checksum        String?  @unique
+  uploadedById    String
+  uploadedBy      User     @relation("DisciplinaryBatchUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+  rowsHistorial   Int      @default(0)
+  rowsTratamiento Int      @default(0)
+  rowsInserted    Int      @default(0)
+  rowsUpdated     Int      @default(0)
+  rowsSkipped     Int      @default(0)
+  errorsJson      Json?
+  notes           String?  @db.Text
+  createdAt       DateTime @default(now())
+
+  apercibimientos DisciplinaryApercibimiento[]
+  tratamientos    DisciplinaryTreatment[]
+
+  @@index([createdAt])
+  @@map("disciplinary_import_batches")
+}
+
+/// Una fila por apercibimiento emitido (importado desde el Excel de la app de escritorio).
+model DisciplinaryApercibimiento {
+  id                 String              @id @default(cuid())
+  /// N° de apercibimiento (texto, único por sistema).
+  numero             String              @unique
+  fechaEmision       DateTime
+  /// Código del empleado normalizado (trim + sin ceros a la izquierda si es numérico).
+  codigoEmpleado     String
+  /// Código tal cual vino en el Excel original (para trazabilidad).
+  codigoEmpleadoRaw  String?
+  nombreEmpleado     String
+  zona               String?
+  sucursal           String?
+  cantidadOmisiones  Int                 @default(0)
+  administrador      String?
+  /// Correo al que se envió el apercibimiento. Sensible: no exponer en UI normal.
+  correoEnviadoA     String?
+  /// Ruta interna al PDF en el equipo de la app de escritorio. Sensible: no exponer.
+  rutaPdf            String?
+  estado             DisciplinaryStatus  @default(EMITIDO)
+  /// Vigencia recalculada en el servidor según fechaEmision + estado.
+  vigencia           DisciplinaryVigencia @default(VIGENTE)
+  batchExterno       String?
+  plantilla          String?
+  planoOrigen        String?
+  motivoAnulacion    String?             @db.Text
+  /// Texto/ruta de la evidencia de anulación. Sensible.
+  evidenciaAnulacion String?             @db.Text
+
+  /// Contrato/Licitación tal cual vino en el Excel (para trazabilidad).
+  contrato              String?
+  /// Versión normalizada (uppercase, sin espacios extra) usada para emparejar con `Contract.licitacionNo`.
+  contratoNormalizado   String?
+  /// Cliente resuelto a partir del contrato (o editado a mano en la web).
+  cliente               String?
+  /// True cuando el cliente fue editado manualmente desde la web; protege re-imports incrementales.
+  clienteSetManual      Boolean            @default(false)
+
+  importBatchId      String?
+  importBatch        DisciplinaryImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  /// Fechas de las omisiones de marca que generaron este apercibimiento.
+  /// Una sola celda del Excel puede traer varias fechas (separadas por , ; | o saltos de línea).
+  omisiones           DisciplinaryOmission[]
+
+  @@index([codigoEmpleado, fechaEmision])
+  @@index([fechaEmision])
+  @@index([administrador])
+  @@index([estado])
+  @@index([vigencia])
+  @@index([contratoNormalizado])
+  @@map("disciplinary_apercibimientos")
+}
+
+/// Cada omisión de marca individual asociada a un apercibimiento. N filas por apercibimiento.
+/// Importante: un mismo día puede tener varias omisiones (ej.: entrada y salida no marcadas),
+/// por lo que NO se deduplica por (apercibimiento, fecha). Cada ítem reportado en la celda
+/// "Fecha de Omisión" del Excel se guarda como una fila independiente preservando la cardinalidad.
+/// Se usa para el reporte de omisiones por periodo, independiente de la `fechaEmision`.
+model DisciplinaryOmission {
+  id               String                      @id @default(cuid())
+  apercibimientoId String
+  apercibimiento   DisciplinaryApercibimiento  @relation(fields: [apercibimientoId], references: [id], onDelete: Cascade)
+  fecha            DateTime
+  /// Hora de la omisión en formato "HH:mm" o "HH:mm:ss" (texto, sin timezone).
+  /// Permite distinguir varias omisiones del mismo día (ej.: entrada vs salida)
+  /// sin riesgos de conversión horaria. Puede venir vacío si el Excel solo trae fecha.
+  hora             String?
+  /// Posición ordinal dentro de la celda original (para mantener orden y distinguir duplicados del mismo día).
+  secuencia        Int                         @default(0)
+  createdAt        DateTime                    @default(now())
+
+  @@index([apercibimientoId, fecha])
+  @@index([fecha])
+  @@map("disciplinary_omisiones")
+}
+
+/// Estado vigente de tratamiento por empleado (1 fila por código).
+model DisciplinaryTreatment {
+  id                 String   @id @default(cuid())
+  codigoEmpleado     String   @unique
+  codigoEmpleadoRaw  String?
+  nombre             String?
+  zona               String?
+  fechaConvocatoria  DateTime?
+  accion             String?
+  cobradoDate        DateTime?
+
+  importBatchId      String?
+  importBatch        DisciplinaryImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+
+  closedCycles       DisciplinaryClosedCycle[]
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([codigoEmpleado])
+  @@map("disciplinary_treatments")
+}
+
+/// Ciclos cerrados (parsing del closed_cycles_json del Excel).
+model DisciplinaryClosedCycle {
+  id                 String                  @id @default(cuid())
+  treatmentId        String
+  treatment          DisciplinaryTreatment   @relation(fields: [treatmentId], references: [id], onDelete: Cascade)
+  cerradoEl          DateTime?
+  accion             DisciplinaryCycleAccion @default(OTRO)
+  accionRaw          String?
+  monto              Decimal?                @db.Decimal(14, 2)
+  count              Int?
+  omissions          Int?
+  lastDate           DateTime?
+  fechaConvocatoria  DateTime?
+  nombre             String?
+  zona               String?
+  raw                Json
+
+  @@index([treatmentId])
+  @@index([cerradoEl])
+  @@index([accion])
+  @@map("disciplinary_closed_cycles")
 }
 
 /// Marca / apariencia (fila única id = default): logo en disco y colores hex para UI.
