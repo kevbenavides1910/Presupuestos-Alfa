@@ -31,13 +31,28 @@ interface Contract {
   status: string; endDate: string;
 }
 
+function filterAssignableContractsByQuery(contracts: Contract[], query: string, limit = 20): Contract[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return contracts.slice(0, limit);
+  return contracts
+    .filter(
+      (c) =>
+        c.licitacionNo.toLowerCase().includes(q) ||
+        c.client.toLowerCase().includes(q) ||
+        c.company.toLowerCase().includes(q)
+    )
+    .slice(0, limit);
+}
+
 interface Distribution {
   contractId: string; licitacionNo: string; client: string; company: string;
   equivalencePct: number; allocatedAmount: number;
+  suppliesBudget?: number;
 }
 interface ExpenseOrigin { id: string; name: string; isActive: boolean; sortOrder: number; }
 type ExpenseDetailDto = {
   id: string;
+  deferredManualDistribution?: boolean;
   deferredIncludeContractIds?: string[];
   registroCxp?: string | null;
   registroTr?: string | null;
@@ -85,6 +100,7 @@ interface Expense {
   id: string; sequentialNo?: number | null; type: ExpenseType; budgetLine?: ExpenseBudgetLine | null;
   description: string; amount: number;
   periodMonth: string; isDeferred: boolean; isDistributed: boolean;
+  deferredManualDistribution?: boolean;
   deferredIncludeContractIds?: string[];
   contractId?: string; positionId?: string; originId?: string; referenceNumber?: string;
   company?: string; notes?: string; createdAt: string;
@@ -287,7 +303,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
     description: "",
     amount: "",
     periodMonth: currentMonth(),
-    mode: "contract" as "contract" | "deferred",
+    mode: "contract" as "contract" | "deferred" | "deferred_custom",
     contractId: "",
     positionId: "",
     originId: "",
@@ -301,6 +317,12 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
   });
   /** Reparto diferido al crear: "all" = todos los contratos activos; si no, solo los IDs listados. */
   const [createDeferredDraft, setCreateDeferredDraft] = useState<DeferredContractDraft>("all");
+  /** Filas para diferido personalizado: búsqueda de contrato + monto (la suma debe igualar el monto del gasto). */
+  const [customDeferredRows, setCustomDeferredRows] = useState<
+    Array<{ contractId: string; amount: string; contractQuery: string }>
+  >([{ contractId: "", amount: "", contractQuery: "" }]);
+  /** Fila cuyo campo de contrato tiene foco (lista desplegable de búsqueda). */
+  const [customDeferredFocusIdx, setCustomDeferredFocusIdx] = useState<number | null>(null);
   /** Borrador en el modal de detalle / reparto */
   const [distributionDraft, setDistributionDraft] = useState<DeferredContractDraft>("all");
   const [contractSearch, setContractSearch] = useState("");
@@ -390,18 +412,32 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
     [deferredAssignableContracts]
   );
 
-  useEffect(() => {
-    if (!previewExpense?.isDeferred) return;
-    setDistributionDraft("all");
-  }, [previewExpense?.id, previewExpense?.isDeferred]);
+  const customDeferredSum = useMemo(
+    () => customDeferredRows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0),
+    [customDeferredRows]
+  );
+  const customDeferredTotalTarget = useMemo(() => {
+    const t = parseFloat(form.amount);
+    return Number.isFinite(t) ? t : 0;
+  }, [form.amount]);
 
   useEffect(() => {
-    if (!previewExpense?.isDeferred || !previewDetail) return;
+    if (!previewExpense?.isDeferred || previewExpense.deferredManualDistribution) return;
+    setDistributionDraft("all");
+  }, [previewExpense?.id, previewExpense?.isDeferred, previewExpense?.deferredManualDistribution]);
+
+  useEffect(() => {
+    if (!previewExpense?.isDeferred || !previewDetail || previewExpense.deferredManualDistribution) return;
     const ids = previewDetail.deferredIncludeContractIds;
     if (ids === undefined) return;
     if (ids.length > 0) setDistributionDraft(ids);
     else setDistributionDraft("all");
-  }, [previewExpense?.id, previewExpense?.isDeferred, previewDetail?.deferredIncludeContractIds]);
+  }, [
+    previewExpense?.id,
+    previewExpense?.isDeferred,
+    previewExpense?.deferredManualDistribution,
+    previewDetail?.deferredIncludeContractIds,
+  ]);
 
   // ── Mutations ──────────────────────────────────────────────────────────────
   const createMutation = useMutation({
@@ -529,6 +565,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
       spreadMonths: 1,
     });
     setCreateDeferredDraft("all");
+    setCustomDeferredRows([{ contractId: "", amount: "", contractQuery: "" }]);
     setContractSearch("");
     setAddExpenseFiles([]);
     if (addExpenseAttachRef.current) addExpenseAttachRef.current.value = "";
@@ -595,6 +632,44 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
       }
     }
 
+    let deferredManualAllocations: { contractId: string; amount: number }[] | undefined;
+    if (form.mode === "deferred_custom") {
+      const total = parseFloat(form.amount);
+      const allocations: { contractId: string; amount: number }[] = [];
+      for (const row of customDeferredRows) {
+        if (!row.contractId) {
+          toast.error("Seleccione el contrato en cada fila del reparto personalizado");
+          return;
+        }
+        const a = parseFloat(row.amount);
+        if (!Number.isFinite(a) || a <= 0) {
+          toast.error("Cada monto asignado debe ser un número mayor que cero");
+          return;
+        }
+        allocations.push({ contractId: row.contractId, amount: a });
+      }
+      if (allocations.length === 0) {
+        toast.error("Agregue al menos un contrato con su monto");
+        return;
+      }
+      const seen = new Set<string>();
+      for (const a of allocations) {
+        if (seen.has(a.contractId)) {
+          toast.error("No repita el mismo contrato en el reparto personalizado");
+          return;
+        }
+        seen.add(a.contractId);
+      }
+      const sum = allocations.reduce((s, r) => s + r.amount, 0);
+      if (Math.abs(sum - total) > 0.02) {
+        toast.error(
+          `La suma de los montos por contrato (${sum.toLocaleString("es-CR", { maximumFractionDigits: 2 })}) debe igualar el monto total (${total.toLocaleString("es-CR", { maximumFractionDigits: 2 })})`
+        );
+        return;
+      }
+      deferredManualAllocations = allocations;
+    }
+
     createMutation.mutate({
       body: {
         type: form.type,
@@ -607,7 +682,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
         positionId: form.mode === "contract" && form.positionId ? form.positionId : undefined,
         originId: form.originId || undefined,
         referenceNumber: form.referenceNumber.trim() || undefined,
-        isDeferred: form.mode === "deferred",
+        isDeferred: form.mode === "deferred" || form.mode === "deferred_custom",
         notes: form.notes.trim() || undefined,
         registroCxp: form.registroCxp.trim() || undefined,
         registroTr: form.registroTr.trim() || undefined,
@@ -618,6 +693,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                 createDeferredDraft === "all" ? [] : createDeferredDraft,
             }
           : {}),
+        ...(deferredManualAllocations ? { deferredManualAllocations } : {}),
       },
       files: addExpenseFiles,
     });
@@ -679,9 +755,11 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
       const typeLabel = EXPENSE_TYPES.find((t) => t.value === e.type)?.label ?? e.type;
       const deferredScope =
         e.isDeferred
-          ? e.deferredIncludeContractIds && e.deferredIncludeContractIds.length > 0
-            ? `Diferido (${e.deferredIncludeContractIds.length} contratos)`
-            : "Diferido (todos los contratos)"
+          ? e.deferredManualDistribution
+            ? "Diferido (montos manuales)"
+            : e.deferredIncludeContractIds && e.deferredIncludeContractIds.length > 0
+              ? `Diferido proporcional (${e.deferredIncludeContractIds.length} contratos)`
+              : "Diferido proporcional (todos)"
           : "Contrato específico";
 
       return {
@@ -1218,7 +1296,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
 
       {/* ── Add Expense Modal ────────────────────────────────────────────────── */}
       <Dialog open={showForm && canEdit} onOpenChange={v => { if (!v) { setShowForm(false); resetForm(); } }}>
-        <DialogContent className="max-w-lg max-h-[min(92vh,880px)] flex flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
+        <DialogContent className="max-w-2xl max-h-[min(92vh,880px)] flex flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
           <div className="shrink-0 px-6 pt-6 pb-2 pr-12">
             <DialogHeader>
               <DialogTitle>Agregar Gasto</DialogTitle>
@@ -1344,12 +1422,13 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
             {/* Mode toggle */}
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-slate-700">Asignar a</label>
-              <div className="flex rounded-md border overflow-hidden">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 rounded-md border border-slate-200 p-1 bg-slate-50/50">
                 <button
                   type="button"
-                  className={`flex-1 py-2 text-sm font-medium transition-colors ${form.mode === "contract" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
+                  className={`rounded py-2.5 px-1 text-xs sm:text-sm font-medium transition-colors ${form.mode === "contract" ? "bg-blue-600 text-white shadow-sm" : "text-slate-600 hover:bg-white"}`}
                   onClick={() => {
                     setCreateDeferredDraft("all");
+                    setCustomDeferredRows([{ contractId: "", amount: "", contractQuery: "" }]);
                     setForm((f) => ({ ...f, mode: "contract" }));
                   }}
                 >
@@ -1357,9 +1436,10 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                 </button>
                 <button
                   type="button"
-                  className={`flex-1 py-2 text-sm font-medium transition-colors ${form.mode === "deferred" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
+                  className={`rounded py-2.5 px-1 text-xs sm:text-sm font-medium transition-colors ${form.mode === "deferred" ? "bg-blue-600 text-white shadow-sm" : "text-slate-600 hover:bg-white"}`}
                   onClick={() => {
                     setCreateDeferredDraft("all");
+                    setCustomDeferredRows([{ contractId: "", amount: "", contractQuery: "" }]);
                     setForm((f) => ({
                       ...f,
                       mode: "deferred",
@@ -1369,9 +1449,30 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                     }));
                   }}
                 >
-                  Diferido (reparto entre contratos)
+                  Diferido proporcional
+                </button>
+                <button
+                  type="button"
+                  className={`rounded py-2.5 px-1 text-xs sm:text-sm font-medium transition-colors ${form.mode === "deferred_custom" ? "bg-blue-600 text-white shadow-sm" : "text-slate-600 hover:bg-white"}`}
+                  onClick={() => {
+                    setCreateDeferredDraft("all");
+                    setCustomDeferredRows([{ contractId: "", amount: "", contractQuery: "" }]);
+                    setForm((f) => ({
+                      ...f,
+                      mode: "deferred_custom",
+                      contractId: "",
+                      positionId: "",
+                      spreadMonths: 1,
+                    }));
+                  }}
+                >
+                  Diferido personalizado
                 </button>
               </div>
+              <p className="text-xs text-slate-500">
+                <strong>Proporcional:</strong> reparto según presupuesto de insumos de cada contrato.
+                <strong className="ml-1">Personalizado:</strong> usted elige el monto exacto por contrato (debe sumar al total).
+              </p>
             </div>
 
             {/* Contract selector */}
@@ -1492,10 +1593,10 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
               </div>
             )}
 
-            {/* Deferred: contratos incluidos en el reparto */}
+            {/* Deferred proporcional */}
             {form.mode === "deferred" && (
               <div className="rounded-lg border border-blue-200 bg-blue-50/80 p-3 text-sm space-y-2">
-                <p className="font-medium text-blue-900">Gasto diferido</p>
+                <p className="font-medium text-blue-900">Gasto diferido proporcional</p>
                 <p className="text-xs text-blue-800">
                   El monto <strong>entra de inmediato</strong> al presupuesto de los contratos marcados (proporcional al presupuesto de insumos). Si un aprobador rechaza el gasto, ese impacto se revierte.
                 </p>
@@ -1507,6 +1608,162 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                   onChange={setCreateDeferredDraft}
                   companyRows={companyRows}
                 />
+              </div>
+            )}
+
+            {/* Deferred personalizado: montos manuales por contrato */}
+            {form.mode === "deferred_custom" && (
+              <div className="rounded-lg border border-violet-200 bg-violet-50/80 p-3 text-sm space-y-3">
+                <p className="font-medium text-violet-900">Reparto manual por contrato</p>
+                <p className="text-xs text-violet-900/90">
+                  Busque cada contrato escribiendo licitación, cliente o empresa. La <strong>suma de los montos</strong> debe
+                  igualar el <strong>monto total</strong> del gasto indicado arriba (hasta ¢2 de diferencia por redondeo).
+                  Los contratos no tienen que ser de la misma empresa que la del gasto.
+                </p>
+                {customDeferredTotalTarget > 0 && (
+                  <p
+                    className={`text-xs font-medium rounded border px-2 py-1.5 ${
+                      Math.abs(customDeferredSum - customDeferredTotalTarget) <= 0.02
+                        ? "border-green-300 bg-green-50 text-green-900"
+                        : "border-amber-300 bg-amber-50 text-amber-900"
+                    }`}
+                  >
+                    Suma asignada: {formatCurrency(customDeferredSum)} · Monto del gasto:{" "}
+                    {formatCurrency(customDeferredTotalTarget)}
+                    {Math.abs(customDeferredSum - customDeferredTotalTarget) <= 0.02
+                      ? " ✓"
+                      : " — ajuste las filas hasta que coincidan"}
+                  </p>
+                )}
+                <div className="space-y-3">
+                  {customDeferredRows.map((row, idx) => {
+                    const rowPickOpen =
+                      customDeferredFocusIdx === idx ||
+                      (Boolean(row.contractQuery) && !row.contractId);
+                    const rowFiltered = filterAssignableContractsByQuery(
+                      deferredAssignableContracts,
+                      row.contractQuery
+                    );
+                    return (
+                      <div key={idx} className="rounded-md border border-violet-100/80 bg-white/90 p-2 space-y-1.5">
+                        <div className="flex flex-wrap items-end gap-2">
+                          <div className="flex-1 min-w-[220px] space-y-1">
+                            <span className="text-xs font-medium text-slate-600">Contrato</span>
+                            <div className="relative">
+                              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+                              <Input
+                                className={`pl-9 h-9 ${row.contractId ? "border-green-400 bg-green-50/60" : ""}`}
+                                placeholder="Escriba para buscar…"
+                                value={row.contractQuery}
+                                onFocus={() => setCustomDeferredFocusIdx(idx)}
+                                onBlur={() => {
+                                  setTimeout(() => {
+                                    setCustomDeferredFocusIdx((cur) => (cur === idx ? null : cur));
+                                  }, 150);
+                                }}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setCustomDeferredRows((rows) =>
+                                    rows.map((r, i) =>
+                                      i === idx ? { ...r, contractQuery: v, contractId: "" } : r
+                                    )
+                                  );
+                                }}
+                              />
+                            </div>
+                            {rowPickOpen && (
+                              <div className="border rounded-md max-h-44 overflow-y-auto divide-y shadow-sm bg-white">
+                                {rowFiltered.length === 0 ? (
+                                  <div className="p-2.5 text-xs text-slate-400">
+                                    Sin resultados para «{row.contractQuery.trim() || "…"}»
+                                  </div>
+                                ) : (
+                                  rowFiltered.map((c) => (
+                                    <button
+                                      key={c.id}
+                                      type="button"
+                                      className={`w-full text-left px-3 py-2 text-sm hover:bg-violet-50 transition-colors ${
+                                        row.contractId === c.id ? "bg-violet-50 text-violet-900" : ""
+                                      }`}
+                                      onMouseDown={(e) => e.preventDefault()}
+                                      onClick={() => {
+                                        setCustomDeferredRows((rows) =>
+                                          rows.map((r, i) =>
+                                            i === idx
+                                              ? {
+                                                  ...r,
+                                                  contractId: c.id,
+                                                  contractQuery: `${c.licitacionNo} — ${c.client}`,
+                                                }
+                                              : r
+                                          )
+                                        );
+                                        setCustomDeferredFocusIdx(null);
+                                      }}
+                                    >
+                                      <div className="font-medium text-slate-800">{c.client}</div>
+                                      <div className="text-xs text-slate-500">
+                                        {c.licitacionNo} · {companyDisplayName(c.company, companyRows)}
+                                      </div>
+                                    </button>
+                                  ))
+                                )}
+                              </div>
+                            )}
+                            {row.contractId ? (
+                              <p className="text-[11px] text-green-700 font-medium">✓ Contrato seleccionado</p>
+                            ) : (
+                              <p className="text-[11px] text-slate-400">Escriba y elija un contrato de la lista</p>
+                            )}
+                          </div>
+                          <div className="w-36 space-y-1">
+                            <span className="text-xs font-medium text-slate-600">Monto ₡</span>
+                            <Input
+                              type="number"
+                              min={0}
+                              step={100}
+                              className="h-9 bg-white"
+                              placeholder="0"
+                              value={row.amount}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setCustomDeferredRows((rows) =>
+                                  rows.map((r, i) => (i === idx ? { ...r, amount: v } : r))
+                                );
+                              }}
+                            />
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 shrink-0 text-slate-500"
+                            disabled={customDeferredRows.length <= 1}
+                            title="Quitar fila"
+                            onClick={() =>
+                              setCustomDeferredRows((rows) =>
+                                rows.length <= 1 ? rows : rows.filter((_, i) => i !== idx)
+                              )
+                            }
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-full gap-1 border-violet-200 bg-white text-violet-900 hover:bg-violet-50"
+                  onClick={() =>
+                    setCustomDeferredRows((rows) => [...rows, { contractId: "", amount: "", contractQuery: "" }])
+                  }
+                >
+                  <Plus className="h-4 w-4" /> Agregar contrato
+                </Button>
               </div>
             )}
 
@@ -1762,26 +2019,37 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
 
               {previewExpense.isDeferred && (previewExpense.approvalStatus ?? "APPROVED") !== "REJECTED" && (
                 <>
-                  <div className="rounded-lg border bg-white p-3 text-sm space-y-2">
-                    <p className="font-medium text-slate-800">Contratos incluidos en el reparto</p>
-                    <p className="text-xs text-slate-500">
-                      Solo los marcados reciben el gasto. Los porcentajes suman 100 % entre los seleccionados (peso = presupuesto de insumos de cada contrato).
-                    </p>
-                    <DeferredContractSelector
-                      contracts={deferredAssignableContracts}
-                      allIds={deferredAssignableIds}
-                      draft={distributionDraft}
-                      onChange={setDistributionDraft}
-                      companyRows={companyRows}
-                      listClassName="max-h-40 overflow-y-auto space-y-2 rounded-md border p-2 bg-slate-50/80"
-                    />
-                  </div>
+                  {!previewExpense.deferredManualDistribution ? (
+                    <div className="rounded-lg border bg-white p-3 text-sm space-y-2">
+                      <p className="font-medium text-slate-800">Contratos incluidos en el reparto</p>
+                      <p className="text-xs text-slate-500">
+                        Solo los marcados reciben el gasto. Los porcentajes suman 100 % entre los seleccionados (peso = presupuesto de insumos de cada contrato).
+                      </p>
+                      <DeferredContractSelector
+                        contracts={deferredAssignableContracts}
+                        allIds={deferredAssignableIds}
+                        draft={distributionDraft}
+                        onChange={setDistributionDraft}
+                        companyRows={companyRows}
+                        listClassName="max-h-40 overflow-y-auto space-y-2 rounded-md border p-2 bg-slate-50/80"
+                      />
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-violet-200 bg-violet-50/90 p-3 text-sm text-violet-950">
+                      <p className="font-medium">Reparto manual (montos fijos)</p>
+                      <p className="text-xs mt-1 opacity-90">
+                        Este gasto se distribuyó con montos definidos manualmente por contrato. Para modificar el reparto hay que actualizar el gasto con permisos completos (no desde esta vista).
+                      </p>
+                    </div>
+                  )}
                   {previewLoading ? (
                     <div className="text-center py-6 text-slate-400">Calculando distribución...</div>
                   ) : (
                     <div className="border rounded-lg overflow-hidden">
                       <p className="text-xs text-slate-500 px-3 py-2 bg-slate-50 border-b">
-                        Vista del reparto (según selección arriba; guarde para aplicar cambios al presupuesto)
+                        {previewExpense.deferredManualDistribution
+                          ? "Montos asignados por contrato (reparto manual)."
+                          : "Vista del reparto (según selección arriba; guarde para aplicar cambios al presupuesto)"}
                       </p>
                       <table className="w-full text-sm">
                         <thead>
@@ -1836,6 +2104,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
               {canEdit &&
                 previewExpense &&
                 previewExpense.isDeferred &&
+                !previewExpense.deferredManualDistribution &&
                 (previewExpense.approvalStatus ?? "APPROVED") !== "REJECTED" && (
                   <Button
                     onClick={() => {

@@ -7,7 +7,10 @@ import { ok, created, badRequest, unauthorized, forbidden, serverError } from "@
 import { expenseCreateSchema } from "@/lib/validations/expense.schema";
 import { requireCompanyCode } from "@/lib/server/companies";
 import { getApprovalStepCountForType, initialApprovalFields } from "@/lib/server/expense-approval";
-import { applyDeferredExpenseDistributions } from "@/lib/server/deferred-expense-distribution";
+import {
+  applyDeferredExpenseDistributions,
+  validateManualAllocationsAgainstContracts,
+} from "@/lib/server/deferred-expense-distribution";
 
 function prismaErrorHint(err: unknown): string | null {
   const msg = err instanceof Error ? err.message : String(err);
@@ -164,17 +167,24 @@ export async function POST(req: NextRequest) {
       registroCxp,
       registroTr,
       deferredIncludeContractIds: rawDeferredContractIds,
+      deferredManualAllocations: rawManualAllocations,
     } = parsed.data;
 
-    const deferredIncludeContractIds =
-      isDeferred && rawDeferredContractIds && rawDeferredContractIds.length > 0
+    const hasManualDeferred = Boolean(rawManualAllocations?.length);
+
+    const deferredIncludeContractIds = hasManualDeferred
+      ? [...new Set(rawManualAllocations!.map((r) => r.contractId))]
+      : isDeferred && rawDeferredContractIds && rawDeferredContractIds.length > 0
         ? rawDeferredContractIds
         : [];
 
     const companyOk = await requireCompanyCode(prisma, company, { mustBeActive: true });
     if (!companyOk.ok) return badRequest(companyOk.message);
 
-    if (isDeferred && deferredIncludeContractIds.length > 0) {
+    if (hasManualDeferred) {
+      const manualOk = await validateManualAllocationsAgainstContracts(prisma, rawManualAllocations!);
+      if (!manualOk.ok) return badRequest(manualOk.message);
+    } else if (isDeferred && deferredIncludeContractIds.length > 0) {
       const okIds = await prisma.contract.findMany({
         where: {
           id: { in: deferredIncludeContractIds },
@@ -212,6 +222,10 @@ export async function POST(req: NextRequest) {
       currentApprovalStep: approval.currentApprovalStep,
       requiredApprovalSteps: approval.requiredApprovalSteps,
       deferredIncludeContractIds: isDeferred ? deferredIncludeContractIds : [],
+      deferredManualDistribution: hasManualDeferred,
+      ...(hasManualDeferred
+        ? { deferredManualAllocations: rawManualAllocations! as Prisma.InputJsonValue }
+        : { deferredManualAllocations: Prisma.JsonNull }),
     };
 
     const include = {

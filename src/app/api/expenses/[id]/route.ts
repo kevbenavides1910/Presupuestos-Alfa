@@ -3,11 +3,14 @@ import { prisma } from "@/lib/prisma";
 import { getSession, canManageExpenses, isAdmin } from "@/lib/api/middleware";
 import { ok, badRequest, unauthorized, forbidden, notFound, serverError } from "@/lib/api/response";
 import { z } from "zod";
-import type { ExpenseBudgetLine, ExpenseType, Prisma } from "@prisma/client";
+import { Prisma, type ExpenseBudgetLine, type ExpenseType } from "@prisma/client";
 import { companyCodeSchema } from "@/lib/validations/company-code";
 import { requireCompanyCode } from "@/lib/server/companies";
 import { canViewExpenseDetail, isCurrentApprover } from "@/lib/server/expense-approval";
-import { applyDeferredExpenseDistributionsTx } from "@/lib/server/deferred-expense-distribution";
+import {
+  applyDeferredExpenseDistributionsTx,
+  validateManualAllocationsAgainstContracts,
+} from "@/lib/server/deferred-expense-distribution";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -25,8 +28,12 @@ const patchExpenseSchema = z
     company: companyCodeSchema.nullable().optional(),
     registroCxp: z.string().nullable().optional(),
     registroTr: z.string().nullable().optional(),
-    /** Vacío en API = todos los contratos activos en el reparto. */
+    /** Vacío en API = todos los contratos activos en el reparto (solo reparto proporcional). */
     deferredIncludeContractIds: z.array(z.string().min(1)).optional(),
+    deferredManualAllocations: z
+      .array(z.object({ contractId: z.string().min(1), amount: z.number().positive() }))
+      .min(1)
+      .optional(),
   })
   .refine(
     (d) =>
@@ -39,7 +46,8 @@ const patchExpenseSchema = z
       d.company !== undefined ||
       d.registroCxp !== undefined ||
       d.registroTr !== undefined ||
-      d.deferredIncludeContractIds !== undefined,
+      d.deferredIncludeContractIds !== undefined ||
+      d.deferredManualAllocations !== undefined,
     { message: "Indique al menos un campo a actualizar" }
   );
 
@@ -160,6 +168,8 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
         registroCxp?: string | null;
         registroTr?: string | null;
         deferredIncludeContractIds?: string[];
+        deferredManualDistribution?: boolean;
+        deferredManualAllocations?: Prisma.InputJsonValue;
       } = {};
       if (p.type !== undefined) data.type = p.type;
       if (p.budgetLine !== undefined) data.budgetLine = p.budgetLine;
@@ -171,7 +181,35 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       if (p.registroCxp !== undefined) data.registroCxp = p.registroCxp;
       if (p.registroTr !== undefined) data.registroTr = p.registroTr;
 
-      if (p.deferredIncludeContractIds !== undefined) {
+      if (p.deferredManualAllocations !== undefined) {
+        if (!existing.isDeferred) return badRequest("Solo aplica a gastos diferidos");
+        if (existing.approvalStatus === "REJECTED") {
+          return badRequest("No se puede editar el reparto de un gasto rechazado");
+        }
+        const rows = p.deferredManualAllocations;
+        const amt = parseFloat(existing.amount.toString());
+        const sum = rows.reduce((s, r) => s + r.amount, 0);
+        if (Math.abs(sum - amt) > 0.02) {
+          return badRequest("La suma de montos por contrato debe coincidir con el monto del gasto (±¢2)");
+        }
+        const seen = new Set<string>();
+        for (const r of rows) {
+          if (seen.has(r.contractId)) return badRequest("No repita el mismo contrato en el reparto manual");
+          seen.add(r.contractId);
+        }
+        const manualOk = await validateManualAllocationsAgainstContracts(prisma, rows);
+        if (!manualOk.ok) return badRequest(manualOk.message);
+        data.deferredManualDistribution = true;
+        data.deferredManualAllocations = rows as Prisma.InputJsonValue;
+        data.deferredIncludeContractIds = [...seen];
+      }
+
+      if (p.deferredIncludeContractIds !== undefined && p.deferredManualAllocations === undefined) {
+        if (existing.deferredManualDistribution) {
+          return badRequest(
+            "Este gasto usa reparto manual. Envíe deferredManualAllocations con la lista completa de contratos y montos, o contacte a quien administra gastos."
+          );
+        }
         if (!existing.isDeferred) return badRequest("Solo aplica a gastos diferidos");
         if (existing.approvalStatus === "REJECTED") {
           return badRequest("No se puede editar el reparto de un gasto rechazado");
@@ -193,7 +231,8 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
         data.deferredIncludeContractIds = ids;
       }
 
-      const shouldReapplyDeferred = p.deferredIncludeContractIds !== undefined;
+      const shouldReapplyDeferred =
+        p.deferredManualAllocations !== undefined || p.deferredIncludeContractIds !== undefined;
 
       if (shouldReapplyDeferred) {
         const updated = await prisma.$transaction(async (tx) => {
@@ -229,6 +268,11 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     // Solo aprobadores actuales o el creador pueden tocarlo en esta ruta limitada.
     let deferredIdsToSave: string[] | undefined;
     if (p.deferredIncludeContractIds !== undefined) {
+      if (existing.deferredManualDistribution) {
+        return badRequest(
+          "Este gasto tiene reparto manual por montos. Solo quien puede editar gastos por completo puede ajustarlo."
+        );
+      }
       if (!existing.isDeferred) return badRequest("Solo aplica a gastos diferidos");
       if (existing.approvalStatus === "REJECTED") {
         return badRequest("No se puede editar el reparto de un gasto rechazado");

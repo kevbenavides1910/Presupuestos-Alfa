@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  LayoutDashboard, FileText, BarChart3, TrendingUp, DollarSign, Users, Shield, BookOpen, ClipboardCheck, Package, AlertTriangle,
+  LayoutDashboard, FileText, BarChart3, TrendingUp, DollarSign, Users, Shield, BookOpen, ClipboardCheck, Package, AlertTriangle, History,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { APP_BRANDING_QUERY_KEY, DEFAULT_PRIMARY_HEX, DEFAULT_SIDEBAR_HEX } from "@/lib/branding-constants";
@@ -15,6 +15,7 @@ const navItems = [
   { href: "/contracts", label: "Contratos", icon: FileText },
   { href: "/expenses", label: "Gastos", icon: DollarSign },
   { href: "/expenses/pending-approvals", label: "Aprobaciones", icon: ClipboardCheck },
+  { href: "/expenses/approval-bitacora", label: "Bitácora aprobaciones", icon: History },
   { href: "/inventory", label: "Inventario", icon: Package },
   { href: "/disciplinario", label: "Disciplinario", icon: AlertTriangle },
   { href: "/reports/annual", label: "Reporte Anual", icon: TrendingUp },

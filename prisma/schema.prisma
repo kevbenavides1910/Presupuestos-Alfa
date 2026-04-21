@@ -643,6 +643,10 @@ model Expense {
   isDistributed   Boolean       @default(false)
   /// Contratos que reciben el reparto del diferido. Vacío = todos los ACTIVE/PROLONGATION.
   deferredIncludeContractIds String[] @default([])
+  /// Si true, el reparto usa `deferredManualAllocations` (montos fijos por contrato), no proporcional a insumos.
+  deferredManualDistribution Boolean @default(false)
+  /// JSON: [{ "contractId": "…", "amount": 123.45 }, …]. Suma debe coincidir con `amount` del gasto.
+  deferredManualAllocations Json?
   notes           String?
   /// Registro contable / CXP (texto libre)
   registroCxp     String?       @db.Text

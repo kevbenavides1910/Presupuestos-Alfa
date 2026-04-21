@@ -43,15 +43,45 @@ export const expenseCreateSchema = z
     spreadMonths: z.coerce.number().int().min(1).max(60).default(1),
     registroCxp: z.string().optional(),
     registroTr: z.string().optional(),
-    /** Vacío = todos los contratos activos en el reparto. Si se envía, solo esos IDs. */
+    /** Vacío = todos los contratos activos en el reparto. Si se envía, solo esos IDs (solo reparto proporcional). */
     deferredIncludeContractIds: z.array(z.string().min(1)).optional(),
+    /** Reparto diferido manual: montos fijos por contrato (la suma debe igualar `amount`, ±¢2). */
+    deferredManualAllocations: z
+      .array(
+        z.object({
+          contractId: z.string().min(1),
+          amount: z.number().positive(),
+        })
+      )
+      .optional(),
   })
   .refine((d) => d.isDeferred || d.contractId, {
     message: "Debe especificar un contrato (o marcar como diferido)",
   })
   .refine((d) => d.spreadMonths <= 1 || (!d.isDeferred && !!d.contractId), {
     message: "El prorrateo en meses solo aplica a gastos asignados a un contrato específico",
-  });
+  })
+  .refine((d) => !d.deferredManualAllocations?.length || d.isDeferred, {
+    message: "El reparto manual solo aplica a gastos diferidos",
+  })
+  .refine(
+    (d) => {
+      const rows = d.deferredManualAllocations;
+      if (!rows?.length) return true;
+      const sum = rows.reduce((s, r) => s + r.amount, 0);
+      return Math.abs(sum - d.amount) <= 0.02 + 1e-9;
+    },
+    { message: "La suma de montos por contrato debe igualar el monto total del gasto (±¢2 por redondeo)" }
+  )
+  .refine(
+    (d) => {
+      const rows = d.deferredManualAllocations;
+      if (!rows?.length) return true;
+      const ids = rows.map((r) => r.contractId);
+      return new Set(ids).size === ids.length;
+    },
+    { message: "No repita el mismo contrato en el reparto manual" }
+  );
 
 export type ExpenseCreateInput = z.infer<typeof expenseCreateSchema>;
 

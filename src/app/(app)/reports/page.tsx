@@ -19,6 +19,7 @@ import {
   REPORT_PARTIDA_OPTIONS,
   type ReportPartidaFilter,
 } from "@/lib/utils/constants";
+import type { RubroTrafficSnapshot } from "@/lib/business/profitability";
 import { useCompanies } from "@/lib/hooks/use-companies";
 import { BarChart3, Download, DollarSign, TrendingUp, AlertTriangle, FileText } from "lucide-react";
 import * as XLSX from "xlsx";
@@ -44,6 +45,12 @@ interface ProfitabilityRow {
   uniformsTotal: number; auditTotal: number; deferredTotal: number; adminTotal: number;
   expensesByTypeMerged: Record<string, number>;
   grandTotal: number; budgetUsagePctFormatted: number; trafficLight: TrafficLight;
+  rubroTraffic: {
+    LABOR: RubroTrafficSnapshot;
+    SUPPLIES: RubroTrafficSnapshot;
+    ADMIN: RubroTrafficSnapshot;
+    PROFIT: RubroTrafficSnapshot;
+  };
   remaining: number; isOverBudget: boolean;
 }
 
@@ -123,10 +130,20 @@ export default function ReportsPage() {
       if (partida === "ALL") {
         o["P. mano de obra"] = r.laborBudget;
         o["% P. MO (s/ fact.)"] = pctOfBillingStr(r.laborBudget, r.monthlyBilling);
+        o["% ejec. MO"] = `${r.rubroTraffic.LABOR.usagePctFormatted.toFixed(1)}%`;
+        o["Sem. MO"] = r.rubroTraffic.LABOR.trafficLight;
         o["P. insumos"] = r.suppliesBudget;
         o["% P. insumos (s/ fact.)"] = pctOfBillingStr(r.suppliesBudget, r.monthlyBilling);
+        o["% ejec. insumos"] = `${r.rubroTraffic.SUPPLIES.usagePctFormatted.toFixed(1)}%`;
+        o["Sem. insumos"] = r.rubroTraffic.SUPPLIES.trafficLight;
         o["P. administrativo"] = r.adminBudget;
         o["% P. adm. (s/ fact.)"] = pctOfBillingStr(r.adminBudget, r.monthlyBilling);
+        o["% ejec. adm."] = `${r.rubroTraffic.ADMIN.usagePctFormatted.toFixed(1)}%`;
+        o["Sem. adm."] = r.rubroTraffic.ADMIN.trafficLight;
+        o["P. utilidad"] = r.profitBudget;
+        o["% P. utilidad (s/ fact.)"] = pctOfBillingStr(r.profitBudget, r.monthlyBilling);
+        o["% ejec. utilidad"] = `${r.rubroTraffic.PROFIT.usagePctFormatted.toFixed(1)}%`;
+        o["Sem. utilidad"] = r.rubroTraffic.PROFIT.trafficLight;
       } else {
         o.Presupuesto = r.reportBudget;
         o["% presup. (s/ fact.)"] = `${(r.reportBudgetPct * 100).toFixed(1)}%`;
@@ -136,8 +153,8 @@ export default function ReportsPage() {
         o[col.label] = r.expensesByTypeMerged[col.type] ?? 0;
       }
       o["Total gastos"] = r.grandTotal;
-      o["% ejecución (semáforo)"] = `${r.budgetUsagePctFormatted.toFixed(1)}%`;
-      o.Semáforo = r.trafficLight;
+      o["% ejec. (peor partida)"] = `${r.budgetUsagePctFormatted.toFixed(1)}%`;
+      o["Semáforo peor partida"] = r.trafficLight;
       o["Disponible / variación"] = r.remaining;
       return o;
     };
@@ -161,10 +178,20 @@ export default function ReportsPage() {
     if (partida === "ALL") {
       totalsRow["P. mano de obra"] = totals.totalLaborBudget;
       totalsRow["% P. MO (s/ fact.)"] = pctOfBillingStr(totals.totalLaborBudget, totals.totalBilling);
+      totalsRow["% ejec. MO"] = "";
+      totalsRow["Sem. MO"] = "";
       totalsRow["P. insumos"] = totals.totalSuppliesBudget;
       totalsRow["% P. insumos (s/ fact.)"] = pctOfBillingStr(totals.totalSuppliesBudget, totals.totalBilling);
+      totalsRow["% ejec. insumos"] = "";
+      totalsRow["Sem. insumos"] = "";
       totalsRow["P. administrativo"] = totals.totalAdminBudget;
       totalsRow["% P. adm. (s/ fact.)"] = pctOfBillingStr(totals.totalAdminBudget, totals.totalBilling);
+      totalsRow["% ejec. adm."] = "";
+      totalsRow["Sem. adm."] = "";
+      totalsRow["P. utilidad"] = totals.totalProfitBudget;
+      totalsRow["% P. utilidad (s/ fact.)"] = pctOfBillingStr(totals.totalProfitBudget, totals.totalBilling);
+      totalsRow["% ejec. utilidad"] = "";
+      totalsRow["Sem. utilidad"] = "";
     } else {
       totalsRow.Presupuesto = totals.totalReportBudget;
       totalsRow["% presup. (s/ fact.)"] = pctOfBillingStr(totals.totalReportBudget, totals.totalBilling);
@@ -174,9 +201,9 @@ export default function ReportsPage() {
       totalsRow[col.label] = (totals.totalsByType ?? {})[col.type] ?? 0;
     }
     totalsRow["Total gastos"] = totals.totalExpenses;
-    totalsRow["% ejecución (semáforo)"] =
+    totalsRow["% ejec. (peor partida)"] =
       rows.length > 0 ? `${(totals.avgUsagePct * 100).toFixed(1)}%` : "";
-    totalsRow.Semáforo = "";
+    totalsRow["Semáforo peor partida"] = "";
     totalsRow["Disponible / variación"] = "";
 
     exportData.push(totalsRow);
@@ -195,6 +222,26 @@ export default function ReportsPage() {
       <div className="text-right tabular-nums leading-tight">
         <div>{formatCurrency(amount)}</div>
         <div className="text-[10px] text-slate-500 font-normal">{pct.toFixed(1)}%</div>
+      </div>
+    );
+  }
+
+  /** Presupuesto + % sobre facturación, con semáforo de ejecución de ese rubro */
+  function BudgetVsBillingWithLight({
+    amount,
+    billing,
+    rubro,
+  }: {
+    amount: number;
+    billing: number;
+    rubro: RubroTrafficSnapshot;
+  }) {
+    return (
+      <div className="text-right tabular-nums leading-tight space-y-1">
+        <div className="flex justify-end">
+          <TrafficLightBadge light={rubro.trafficLight} pct={rubro.usagePctFormatted} size="sm" />
+        </div>
+        <BudgetVsBilling amount={amount} billing={billing} />
       </div>
     );
   }
@@ -326,6 +373,7 @@ export default function ReportsPage() {
                           <th className="text-right px-3 py-2 font-semibold text-slate-600 whitespace-nowrap">P. mano de obra</th>
                           <th className="text-right px-3 py-2 font-semibold text-slate-600 whitespace-nowrap">P. insumos</th>
                           <th className="text-right px-3 py-2 font-semibold text-slate-600 whitespace-nowrap">P. administrativo</th>
+                          <th className="text-right px-3 py-2 font-semibold text-slate-600 whitespace-nowrap">P. utilidad</th>
                         </>
                       ) : (
                         <th className="text-right px-3 py-2 font-semibold text-slate-600 whitespace-nowrap">Presupuesto</th>
@@ -336,7 +384,7 @@ export default function ReportsPage() {
                         </th>
                       ))}
                       <th className="text-right px-3 py-2 font-semibold text-slate-600">Total</th>
-                      <th className="text-left px-3 py-2 font-semibold text-slate-600">Semáforo</th>
+                      <th className="text-left px-3 py-2 font-semibold text-slate-600 whitespace-nowrap">Peor partida</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -360,13 +408,32 @@ export default function ReportsPage() {
                         {partida === "ALL" ? (
                           <>
                             <td className="px-3 py-2">
-                              <BudgetVsBilling amount={r.laborBudget} billing={r.monthlyBilling} />
+                              <BudgetVsBillingWithLight
+                                amount={r.laborBudget}
+                                billing={r.monthlyBilling}
+                                rubro={r.rubroTraffic.LABOR}
+                              />
                             </td>
                             <td className="px-3 py-2">
-                              <BudgetVsBilling amount={r.suppliesBudget} billing={r.monthlyBilling} />
+                              <BudgetVsBillingWithLight
+                                amount={r.suppliesBudget}
+                                billing={r.monthlyBilling}
+                                rubro={r.rubroTraffic.SUPPLIES}
+                              />
                             </td>
                             <td className="px-3 py-2">
-                              <BudgetVsBilling amount={r.adminBudget} billing={r.monthlyBilling} />
+                              <BudgetVsBillingWithLight
+                                amount={r.adminBudget}
+                                billing={r.monthlyBilling}
+                                rubro={r.rubroTraffic.ADMIN}
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <BudgetVsBillingWithLight
+                                amount={r.profitBudget}
+                                billing={r.monthlyBilling}
+                                rubro={r.rubroTraffic.PROFIT}
+                              />
                             </td>
                           </>
                         ) : (
@@ -383,7 +450,7 @@ export default function ReportsPage() {
                           );
                         })}
                         <td className="px-3 py-2 text-right font-semibold">{r.grandTotal > 0 ? formatCurrency(r.grandTotal) : "—"}</td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2" title="Mayor % de ejecución entre M.O., insumos, administrativo y utilidad">
                           <TrafficLightBadge light={r.trafficLight} pct={r.budgetUsagePctFormatted} size="sm" />
                         </td>
                       </tr>
@@ -404,6 +471,9 @@ export default function ReportsPage() {
                             </td>
                             <td className="px-3 py-2">
                               <BudgetVsBilling amount={totals.totalAdminBudget} billing={totals.totalBilling} />
+                            </td>
+                            <td className="px-3 py-2">
+                              <BudgetVsBilling amount={totals.totalProfitBudget} billing={totals.totalBilling} />
                             </td>
                           </>
                         ) : (

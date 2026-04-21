@@ -19,6 +19,13 @@ export function effectiveSuppliesPct(contract: {
   return s > 0 ? s : toNum(contract.suppliesBudgetPct);
 }
 
+/** % ejecución y semáforo por rubro de presupuesto (M.O., insumos, adm., utilidad). */
+export type RubroTrafficSnapshot = {
+  usagePct: number;
+  usagePctFormatted: number;
+  trafficLight: TrafficLight;
+};
+
 export interface ProfitabilityResult {
   contractId: string;
   monthlyBilling: number;
@@ -46,6 +53,13 @@ export interface ProfitabilityResult {
   budgetUsagePctFormatted: number;
   remaining: number;
   trafficLight: TrafficLight;
+  /** Desglose por línea de presupuesto (siempre calculado con los mismos gastos vs presupuesto del período). */
+  rubroTraffic: {
+    LABOR: RubroTrafficSnapshot;
+    SUPPLIES: RubroTrafficSnapshot;
+    ADMIN: RubroTrafficSnapshot;
+    PROFIT: RubroTrafficSnapshot;
+  };
   isOverBudget: boolean;
   lifetime?: {
     totalBilled: number;
@@ -112,6 +126,15 @@ function monthRange(periodMonth?: Date): { gte: Date; lte: Date } | undefined {
 function usageRatio(spend: number, budget: number): number {
   if (budget <= 0) return 0;
   return spend / budget;
+}
+
+function rubroSnapshot(spend: number, budget: number): RubroTrafficSnapshot {
+  const ur = usageRatio(spend, budget);
+  return {
+    usagePct: ur,
+    usagePctFormatted: ur * 100,
+    trafficLight: budget > 0 ? calcTrafficLight(ur) : "GREEN",
+  };
 }
 
 export async function getContractProfitability(
@@ -393,6 +416,13 @@ export async function getContractProfitability(
     };
   }
 
+  const rubroTraffic = {
+    LABOR: rubroSnapshot(laborSpend, laborBudget),
+    SUPPLIES: rubroSnapshot(suppliesSpendTotal, suppliesBudget),
+    ADMIN: rubroSnapshot(adminSpendTotal, adminBudget),
+    PROFIT: rubroSnapshot(profitSpend, profitBudget),
+  };
+
   return {
     contractId,
     monthlyBilling: billing,
@@ -418,6 +448,7 @@ export async function getContractProfitability(
     budgetUsagePctFormatted,
     remaining,
     trafficLight,
+    rubroTraffic,
     isOverBudget,
     lifetime,
   };
