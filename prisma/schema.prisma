@@ -485,6 +485,9 @@ model Zone {
   description String?
   isActive    Boolean             @default(true)
   sortOrder   Int                 @default(0)
+  /// Administrador disciplinario por zona (misma lógica que zonas_admin del escritorio).
+  disciplinaryAdministrator      String?
+  disciplinaryAdministratorEmail String?
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
   locations   ContractLocation[]
@@ -862,6 +865,8 @@ model DisciplinaryOmission {
   /// Permite distinguir varias omisiones del mismo día (ej.: entrada vs salida)
   /// sin riesgos de conversión horaria. Puede venir vacío si el Excel solo trae fecha.
   hora             String?
+  /// Lugar / dispositivo / punto de marca omitido (columna del Excel de importación).
+  puntoOmitido     String?                     @db.VarChar(500)
   /// Posición ordinal dentro de la celda original (para mantener orden y distinguir duplicados del mismo día).
   secuencia        Int                         @default(0)
   createdAt        DateTime                    @default(now())
@@ -869,6 +874,27 @@ model DisciplinaryOmission {
   @@index([apercibimientoId, fecha])
   @@index([fecha])
   @@map("disciplinary_omisiones")
+}
+
+/// Maestro de empleados para disciplinario (CSV RRHH u otros; correo para envío de apercibimientos).
+model DisciplinaryEmployeeMaster {
+  id                 String   @id @default(cuid())
+  codigoEmpleado     String   @unique
+  codigoEmpleadoRaw  String?
+  nombre             String?
+  /// Número de cédula / identificación (para PDF y reportes).
+  cedula             String?
+  email              String?
+  zona               String?
+  telefono           String?
+  cuentaBancaria     String?  @db.Text
+  extra              Json?
+  lastSourceFilename String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([updatedAt])
+  @@map("disciplinary_employee_master")
 }
 
 /// Estado vigente de tratamiento por empleado (1 fila por código).
@@ -926,4 +952,39 @@ model AppBranding {
   updatedAt    DateTime @updatedAt
 
   @@map("app_branding")
+}
+
+/// Ajustes disciplinarios (fila única id = default): documento y salida de correo.
+model AppDisciplinarySettings {
+  id                   String   @id @default("default")
+  documentTitle        String   @default("APERCIBIMIENTO — OMISION DE MARCA")
+  documentLegalText    String   @default("Se registra apercibimiento por omisiones de marca segun normativa interna vigente.")
+  documentFooter       String   @default("Documento generado desde Syntra — Control de Rentabilidad.")
+  /// Encabezado tipo formulario (similar a F-RH del escritorio).
+  documentFormCode     String   @default("F-RH-30")
+  documentFormRevision String   @default("05/07/2021")
+  documentFormVersion  String   @default("2")
+  documentFormSubtitle String   @default("Apercibimiento por omisión de marca")
+  /// Párrafo tras «Estimado(a) Señor(a):». Placeholders: {{numero}}, {{fecha_emision}}, {{omisiones_count}}, {{nombre}}, {{codigo}}, {{cedula}}
+  documentIntroTemplate String   @default("Por medio de la presente se le notifica el apercibimiento N° {{numero}}, registrado con fecha de emisión {{fecha_emision}}, por {{omisiones_count}} omisión(es) de marca. Los datos del funcionario y el detalle de las omisiones registradas son los siguientes:") @db.Text
+  /// Imagen de firma/sello para el PDF (PNG/JPEG/WebP bajo uploads/branding).
+  documentSignaturePath String?
+  /// Año del último consecutivo asignado (reinicia el contador al cambiar de año civil).
+  apercibimientoConsecutiveYear Int?
+  /// Último número asignado en `apercibimientoConsecutiveYear` (OM-AAAA-NNNNNN).
+  apercibimientoConsecutiveLast   Int      @default(0)
+  /// Copia fija en todos los correos de apercibimiento (varias direcciones separadas por coma o punto y coma).
+  emailFixedCc         String?  @db.Text
+  emailSubjectTemplate String   @default("Apercibimiento {{numero}} — omision de marca")
+  emailBodyTemplate    String   @default("Estimado/a {{nombre}}:\\n\\nSe registra el apercibimiento {{numero}} por {{omisiones_count}} omision(es) de marca. Adjuntamos la constancia en PDF.\\n\\nEste mensaje fue enviado automaticamente desde el sistema de control.")
+  mailProvider         String   @default("CUSTOM_SMTP")
+  smtpHost             String?
+  smtpPort             Int?
+  smtpSecure           Boolean?
+  smtpUser             String?
+  smtpPass             String?
+  smtpFrom             String?
+  updatedAt            DateTime @updatedAt
+
+  @@map("app_disciplinary_settings")
 }

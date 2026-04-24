@@ -63,27 +63,18 @@ function expenseMonthKey(periodMonth: string | Date): string {
 // ── Component ─────────────────────────────────────────────────────────────────
 interface Props {
   contractId: string;
-  /** Lock to a specific expense type (e.g. "UNIFORMS", "AUDIT") */
-  lockedType?: string;
-  /** Label shown in empty-state when a type is locked */
-  lockedTypeLabel?: string;
-  /** Show only deferred (isDeferred=true) expenses distributed to this contract */
-  isDeferred?: boolean;
   /** Alta/edición de gastos (eliminar, distribuir) */
   canManageExpenses?: boolean;
 }
 
 export function ContractExpensesTab({
   contractId,
-  lockedType,
-  lockedTypeLabel,
-  isDeferred,
   canManageExpenses = true,
 }: Props) {
   const qc = useQueryClient();
   const { data: companiesRes } = useCompanies();
   const companyRows = companiesRes?.data ?? [];
-  const [filterType, setFilterType] = useState(lockedType ?? "all");
+  const [filterType, setFilterType] = useState("all");
   /** Empty string = todos los meses */
   const [filterMonth, setFilterMonth] = useState("");
   const [previewExpense, setPreviewExpense] = useState<Expense | null>(null);
@@ -96,26 +87,26 @@ export function ContractExpensesTab({
   });
   const typeConfigs = typeConfigData?.data ?? [];
 
-  // For deferred tab: fetch via distributions endpoint
+  // Diferidos repartidos a este contrato (partida del monto según equivalencia)
   const { data: deferredData, isLoading: deferredLoading } = useQuery<{ data: Expense[] }>({
     queryKey: ["contract-deferred-expenses", contractId],
-    queryFn: () => fetch(`/api/expenses?isDeferred=true&distributedTo=${contractId}&pageSize=200`).then(r => r.json()),
-    enabled: !!isDeferred,
+    queryFn: () =>
+      fetch(`/api/expenses?isDeferred=true&distributedTo=${contractId}&pageSize=200`, {
+        credentials: "same-origin",
+      }).then((r) => r.json()),
   });
 
-  // For all other tabs: fetch direct expenses linked to this contract
+  // Gastos directos imputados a este contrato
   const { data, isLoading: directLoading } = useQuery<{ data: Expense[]; meta: { total: number } }>({
     queryKey: ["contract-expenses", contractId, filterType],
     queryFn: () => {
       const p = new URLSearchParams({ contractId, pageSize: "200" });
-      const activeType = lockedType ?? filterType;
-      if (activeType !== "all") p.set("type", activeType);
-      return fetch(`/api/expenses?${p}`).then(r => r.json());
+      if (filterType !== "all") p.set("type", filterType);
+      return fetch(`/api/expenses?${p}`, { credentials: "same-origin" }).then((r) => r.json());
     },
-    enabled: !isDeferred,
   });
 
-  const isLoading = isDeferred ? deferredLoading : directLoading;
+  const isLoading = directLoading || deferredLoading;
 
   // Distribution preview
   const { data: previewData, isLoading: previewLoading } = useQuery<{ data: Distribution[] }>({
@@ -134,12 +125,26 @@ export function ContractExpensesTab({
       if (res.error) { toast.error(res.error.message ?? "Error"); return; }
       toast.success("Gasto eliminado");
       qc.invalidateQueries({ queryKey: ["contract-expenses", contractId] });
+      qc.invalidateQueries({ queryKey: ["contract-deferred-expenses", contractId] });
       qc.invalidateQueries({ queryKey: ["profitability", contractId] });
     },
     onError: () => toast.error("Error al eliminar"),
   });
 
-  const expenses = isDeferred ? (deferredData?.data ?? []) : (data?.data ?? []);
+  const expenses = useMemo(() => {
+    const direct = data?.data ?? [];
+    const deferredRows = deferredData?.data ?? [];
+    const deferredFiltered =
+      filterType === "all" ? deferredRows : deferredRows.filter((e) => e.type === filterType);
+    const merged = [...direct, ...deferredFiltered];
+    merged.sort((a, b) => {
+      const ak = expenseMonthKey(a.periodMonth);
+      const bk = expenseMonthKey(b.periodMonth);
+      if (ak !== bk) return bk.localeCompare(ak);
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+    return merged;
+  }, [data?.data, deferredData?.data, filterType]);
 
   const displayedExpenses = useMemo(() => {
     if (!filterMonth) return expenses;
@@ -148,8 +153,12 @@ export function ContractExpensesTab({
 
   const total = displayedExpenses.reduce((s, e) => s + e.amount, 0);
 
-  // Tipos presentes en los datos cargados (sin filtrar por mes)
-  const presentTypes = [...new Set(expenses.map((e) => e.type))];
+  // Tipos presentes (directos + diferidos), sin filtrar por tipo/mes — para el selector
+  const presentTypes = useMemo(() => {
+    const directAll = data?.data ?? [];
+    const defAll = deferredData?.data ?? [];
+    return [...new Set([...directAll, ...defAll].map((e) => e.type))];
+  }, [data?.data, deferredData?.data]);
 
   return (
     <div className="space-y-4">
@@ -177,9 +186,7 @@ export function ContractExpensesTab({
               </Button>
             ) : null}
           </div>
-          {/* Only show type selector when NOT locked to a specific type */}
-          {!lockedType && (
-            <Select value={filterType} onValueChange={setFilterType}>
+          <Select value={filterType} onValueChange={setFilterType}>
               <SelectTrigger className="w-44 h-8 text-sm">
                 <SelectValue placeholder="Todos los tipos" />
               </SelectTrigger>
@@ -191,7 +198,6 @@ export function ContractExpensesTab({
                 })}
               </SelectContent>
             </Select>
-          )}
           <Button
             type="button"
             variant="outline"
@@ -215,7 +221,7 @@ export function ContractExpensesTab({
                   Monto: e.amount,
                   "Monto total (diferido)": e.fullAmount ?? "",
                   "Equivalencia %": e.equivalencePct != null ? (e.equivalencePct * 100).toFixed(2) + "%" : "",
-                  Reparto: isDeferred ? "Diferido" : e.isDeferred ? "Diferido" : "Directo",
+                  Reparto: e.isDeferred ? "Diferido" : "Directo",
                   Estado: e.approvalStatus ?? "",
                 };
               });
@@ -253,17 +259,10 @@ export function ContractExpensesTab({
       ) : expenses.length === 0 ? (
         <div className="p-10 text-center text-slate-400 border rounded-lg">
           <Receipt className="h-8 w-8 mx-auto mb-2 opacity-30" />
-          {isDeferred
-            ? "No hay gastos diferidos distribuidos a este contrato"
-            : lockedTypeLabel
-              ? `No hay gastos de tipo "${lockedTypeLabel}" registrados para este contrato`
-              : "No hay gastos registrados para este contrato"
-          }
-          {!isDeferred && (
-            <p className="text-xs mt-2">
-              Vaya a <span className="font-medium">Gastos → Agregar Gasto</span> y seleccione este contrato
-            </p>
-          )}
+          {"No hay gastos registrados para este contrato (directos ni diferidos repartidos aquí)."}
+          <p className="text-xs mt-2">
+            Vaya a <span className="font-medium">Gastos → Agregar Gasto</span> para imputar a este contrato o registrar un gasto diferido.
+          </p>
         </div>
       ) : displayedExpenses.length === 0 ? (
         <div className="p-10 text-center text-slate-400 border rounded-lg">
@@ -339,9 +338,7 @@ export function ContractExpensesTab({
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      {isDeferred ? (
-                        <Badge variant="success">Distribuido</Badge>
-                      ) : e.isDeferred ? (
+                      {e.isDeferred ? (
                         e.isDistributed
                           ? <Badge variant="success">Distribuido</Badge>
                           : <Badge variant="warning">Pendiente</Badge>
@@ -351,12 +348,12 @@ export function ContractExpensesTab({
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1 justify-end">
-                        {(isDeferred || e.isDeferred) && (
+                        {e.isDeferred && (
                           <Button size="sm" variant="ghost" className="h-7" onClick={() => setPreviewExpense(e)}>
                             <Eye className="h-3 w-3" />
                           </Button>
                         )}
-                        {canManageExpenses && !isDeferred && !e.isDistributed && (
+                        {canManageExpenses && !e.isDeferred && !e.isDistributed && (
                           <Button size="sm" variant="ghost"
                             className="text-red-500 hover:bg-red-50 h-7"
                             onClick={() => { if (confirm("¿Eliminar este gasto?")) deleteMutation.mutate(e.id); }}

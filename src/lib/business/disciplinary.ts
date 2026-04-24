@@ -373,6 +373,8 @@ export interface OmisionEntry {
   fecha: Date;
   /** "HH:mm" o "HH:mm:ss"; null si la celda no traía componente horario o era 00:00. */
   hora: string | null;
+  /** Texto del archivo (columna tipo «Punto omitido» / Marca / Dispositivo). */
+  puntoOmitido?: string | null;
 }
 
 /**

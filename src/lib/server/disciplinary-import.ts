@@ -16,6 +16,8 @@ import {
   parseOmisionesEntries,
   type OmisionEntry,
 } from "@/lib/business/disciplinary";
+import { pickPuntoOmitidoFromRow } from "@/lib/business/disciplinary-punto-omitido";
+import { defaultsForZoneText, loadZoneDisciplinaryDefaultsMap } from "@/lib/server/disciplinary-zone-defaults";
 
 export interface DisciplinaryImportResult {
   batchId: string;
@@ -189,6 +191,7 @@ export async function importDisciplinaryWorkbook(
         apercibimientoId,
         fecha: e.fecha,
         hora: e.hora,
+        puntoOmitido: e.puntoOmitido?.trim() || null,
         secuencia: idx,
       })),
     });
@@ -207,6 +210,8 @@ export async function importDisciplinaryWorkbook(
       rowsTratamiento: sheets.stats?.length ?? 0,
     },
   });
+
+  const zoneDisciplineDefaults = await loadZoneDisciplinaryDefaultsMap();
 
   // ── 2) Procesar Historial (upsert por N°).
   let apInserted = 0;
@@ -258,7 +263,8 @@ export async function importDisciplinaryWorkbook(
         const cliente = resolveClienteByContrato(contratoNormalizado);
 
         // La celda de fecha de omisión puede contener 1..N fechas separadas por coma/;/|/newline.
-        const omisionEntries = parseOmisionesEntries(
+        const puntoFila = pickPuntoOmitidoFromRow(norm);
+        const omisionEntries: OmisionEntry[] = parseOmisionesEntries(
           pickCell(norm, [
             "Fecha de Omisión",
             "Fecha de Omision",
@@ -270,7 +276,14 @@ export async function importDisciplinaryWorkbook(
             "Fechas Omisiones",
             "Omisión Fechas",
           ]),
-        );
+        ).map((e) => ({ ...e, puntoOmitido: e.puntoOmitido ?? puntoFila }));
+
+        const zonaVal = emptyToNull(pickCell(norm, ["Zona"]));
+        let administrador = emptyToNull(pickCell(norm, ["Administrador"]));
+        if (!administrador && zonaVal) {
+          const zd = defaultsForZoneText(zoneDisciplineDefaults, zonaVal);
+          if (zd?.administrator) administrador = zd.administrator;
+        }
 
         const data = {
           numero,
@@ -278,10 +291,10 @@ export async function importDisciplinaryWorkbook(
           codigoEmpleado: codigo,
           codigoEmpleadoRaw: emptyToNull(codigoRaw),
           nombreEmpleado: nombre,
-          zona: emptyToNull(pickCell(norm, ["Zona"])),
+          zona: zonaVal,
           sucursal: emptyToNull(pickCell(norm, ["Sucursal"])),
           cantidadOmisiones: toIntFlexible(pickCell(norm, ["Omisiones", "Cantidad Omisiones", "Cantidad de Omisiones"])),
-          administrador: emptyToNull(pickCell(norm, ["Administrador"])),
+          administrador,
           correoEnviadoA: emptyToNull(pickCell(norm, ["Correo", "Correo Enviado A"])),
           rutaPdf: emptyToNull(pickCell(norm, ["PDF", "Ruta PDF", "Ruta del PDF"])),
           estado,

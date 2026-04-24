@@ -1,0 +1,84 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-04-22 18:40:00.000000",
+ "doctype": "DocType",
+ "document_type": "Single",
+ "issingle": 1,
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "api_url",
+  "api_username",
+  "api_password",
+  "emisor_cedula",
+  "ambiente"
+ ],
+ "fields": [
+  {
+   "default": "https://api-demo.crlibre.org/api.php",
+   "fieldname": "api_url",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "API URL",
+   "reqd": 1
+  },
+  {
+   "description": "Solo obligatorio si Modo API = users_loggedIn.",
+   "fieldname": "api_username",
+   "fieldtype": "Data",
+   "label": "API Username"
+  },
+  {
+   "description": "Solo obligatorio si Modo API = users_loggedIn.",
+   "fieldname": "api_password",
+   "fieldtype": "Password",
+   "label": "API Password"
+  },
+  {
+   "description": "Debe tener entre 9 y 12 dígitos.",
+   "fieldname": "emisor_cedula",
+   "fieldtype": "Data",
+   "label": "Cédula Emisor",
+   "reqd": 1
+  },
+  {
+   "default": "Staging",
+   "fieldname": "ambiente",
+   "fieldtype": "Select",
+   "label": "Ambiente",
+   "options": "Staging\nProduccion",
+   "reqd": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-04-22 18:40:00.000000",
+ "modified_by": "Administrator",
+ "module": "Facturacion CR",
+ "name": "CRLibre Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Accounts Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

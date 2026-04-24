@@ -1,0 +1,47 @@
+<?php
+/*
+ * Plantilla para volumen www/settings.php en CRLibre Docker (local).
+ * Copiada/adaptada de www/settings_original_docker.php.dist (API_Hacienda v4.4).
+ * DB = valores por defecto de docker-php-apache/php-apache.env.
+ */
+
+global $config;
+
+$config['db']['name'] = "testdb";
+$config['db']['pwd'] = 'testpassword';
+$config['db']['user'] = "testuser";
+$config['db']['host'] = "mariadb";
+
+$config['crypto']['key'] = "devlocal0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+
+$config['boot']['alert'] = "false";
+
+$config['debug']['print_all']    = true;
+$config['debug']['print_absurd'] = true;
+$config['debug']['print_debug']  = true;
+$config['debug']['print_error']  = true;
+
+$config['mail']['type']         = "mail";
+$config['mail']['address']      = "";
+$config['mail']['noreply']      = "";
+$config['mail']['host']         = "";
+$config['mail']['username']     = "";
+$config['mail']['password']     = "";
+$config['mail']['secure']       = "tls";
+$config['mail']['port']         = 587;
+
+$config['modules']['coreInstall'] = "/var/www/html/api/";
+
+$config['core']['siteName'] = 'MySite';
+$config['core']['host'] = "localhost";
+$config['core']['compannyIMG'] = "";
+
+$config['users']['sessionLifetime'] = -1;
+
+$config['modules']['core']     = array('cala','db', 'users', 'files', 'geoloc', 'wirez', 'crypto');
+$config['modules']['coreLoad'] = array('cala', 'db', 'users', 'crypto');
+
+$config['modules']['corePath']    = $config['modules']['coreInstall'] . "modules/";
+$config['modules']['contribPath'] = $config['modules']['coreInstall'] . "contrib/";
+$config['core']['resourcesPath'] = $config['modules']['coreInstall'] . 'resources/';
+$config['files']['basePath'] = $config['modules']['coreInstall'] . 'files/';

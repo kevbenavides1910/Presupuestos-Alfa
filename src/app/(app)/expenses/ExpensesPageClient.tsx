@@ -31,6 +31,17 @@ interface Contract {
   status: string; endDate: string;
 }
 
+/** Alineado con assignable en API (activos, suspendidos, cerrados recientes). */
+function isAssignableContractForExpense(c: Contract): boolean {
+  if (c.status === "ACTIVE" || c.status === "PROLONGATION" || c.status === "SUSPENDED") return true;
+  if (c.status === "FINISHED" && c.endDate) {
+    const cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - 6);
+    return new Date(c.endDate) >= cutoff;
+  }
+  return false;
+}
+
 function filterAssignableContractsByQuery(contracts: Contract[], query: string, limit = 20): Contract[] {
   const q = query.trim().toLowerCase();
   if (!q) return contracts.slice(0, limit);
@@ -42,6 +53,15 @@ function filterAssignableContractsByQuery(contracts: Contract[], query: string, 
         c.company.toLowerCase().includes(q)
     )
     .slice(0, limit);
+}
+
+function useDebouncedValue<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(id);
+  }, [value, delay]);
+  return debounced;
 }
 
 interface Distribution {
@@ -94,6 +114,17 @@ function isImage(mime: string | undefined, fileName: string) {
 
 function isPreviewable(mime: string | undefined, fileName: string) {
   return isPdf(mime, fileName) || isImage(mime, fileName);
+}
+
+/** Prorrateo en N meses: al crear, la descripción termina en «(mes i/n)». */
+const PRORRATEO_DESC_RE = /\(\s*mes\s+\d+\s*\/\s*\d+\s*\)\s*$/i;
+
+type ExpenseDistributionFilter = "all" | "single_contract" | "multi_month" | "deferred";
+
+function expenseDistributionKind(e: Expense): Exclude<ExpenseDistributionFilter, "all"> {
+  if (e.isDeferred) return "deferred";
+  if (PRORRATEO_DESC_RE.test((e.description ?? "").trim())) return "multi_month";
+  return "single_contract";
 }
 
 interface Expense {
@@ -278,6 +309,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
   const [filterType, setFilterType] = useState<string>("all");
   const [filterCompany, setFilterCompany] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [filterDistribution, setFilterDistribution] = useState<ExpenseDistributionFilter>("all");
 
   // Modals
   const [showForm, setShowForm] = useState(false);
@@ -287,6 +319,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
   const [editForm, setEditForm] = useState({
     type: "OTHER" as ExpenseType,
     budgetLine: "LABOR" as ExpenseBudgetLine,
+    periodMonth: currentMonth(),
     company: "",
     description: "",
     originId: "",
@@ -353,8 +386,44 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
 
   const { data: contractsData } = useQuery<{ data: Contract[] }>({
     queryKey: ["contracts-assignable"],
-    queryFn: () => fetch("/api/contracts?pageSize=200&assignable=true").then(r => r.json()),
+    queryFn: () =>
+      fetch("/api/contracts?pageSize=500&assignable=true", { credentials: "same-origin" }).then((r) =>
+        r.json()
+      ),
     staleTime: 60000,
+  });
+
+  const debouncedContractSearch = useDebouncedValue(contractSearch, 300);
+  const remoteContractQuery = debouncedContractSearch.trim();
+  const {
+    data: contractRemoteSearch,
+    isFetching: contractRemoteSearchLoading,
+  } = useQuery<{ data: Contract[] }>({
+    queryKey: ["contracts-assignable-search", remoteContractQuery],
+    queryFn: () =>
+      fetch(
+        `/api/contracts?assignable=true&search=${encodeURIComponent(remoteContractQuery)}&pageSize=100`,
+        { credentials: "same-origin" }
+      ).then((r) => r.json()),
+    enabled: showForm && form.mode === "contract" && remoteContractQuery.length >= 2,
+    staleTime: 60_000,
+  });
+
+  const focusedDeferredQuery =
+    form.mode === "deferred_custom" && customDeferredFocusIdx !== null
+      ? customDeferredRows[customDeferredFocusIdx]?.contractQuery ?? ""
+      : "";
+  const debouncedDeferredRowSearch = useDebouncedValue(focusedDeferredQuery, 300);
+  const remoteDeferredQuery = debouncedDeferredRowSearch.trim();
+  const { data: deferredRowRemoteSearch } = useQuery<{ data: Contract[] }>({
+    queryKey: ["contracts-assignable-search", "deferred-row", remoteDeferredQuery],
+    queryFn: () =>
+      fetch(
+        `/api/contracts?assignable=true&search=${encodeURIComponent(remoteDeferredQuery)}&pageSize=100`,
+        { credentials: "same-origin" }
+      ).then((r) => r.json()),
+    enabled: showForm && form.mode === "deferred_custom" && remoteDeferredQuery.length >= 2,
+    staleTime: 60_000,
   });
 
   const { data: originsData } = useQuery<{ data: ExpenseOrigin[] }>({
@@ -404,7 +473,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
 
   const allContracts = contractsData?.data ?? [];
   const deferredAssignableContracts = useMemo(
-    () => allContracts.filter((c) => c.status === "ACTIVE" || c.status === "PROLONGATION"),
+    () => allContracts.filter(isAssignableContractForExpense),
     [allContracts]
   );
   const deferredAssignableIds = useMemo(
@@ -573,9 +642,14 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
 
   function openEdit(e: Expense) {
     setEditExpense(e);
+    const dt = new Date(e.periodMonth);
+    const periodMonth = Number.isNaN(dt.getTime())
+      ? currentMonth()
+      : `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`;
     setEditForm({
       type: e.type,
       budgetLine: e.budgetLine ?? "LABOR",
+      periodMonth,
       company: e.company ?? "",
       description: e.description,
       originId: e.originId ?? "",
@@ -597,6 +671,7 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
       body: {
         type: editForm.type,
         budgetLine: editForm.budgetLine,
+        periodMonth: editForm.periodMonth,
         company: editForm.company || null,
         description: editForm.description.trim(),
         originId: editForm.originId || null,
@@ -700,21 +775,34 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
   }
 
   // ── Filtered contracts for search ──────────────────────────────────────────
-  // The API already filters by assignable=true (server-side, timezone-aware)
-
-  const filteredContracts = allContracts.filter(c => {
-    const q = contractSearch.toLowerCase();
-    return !q || c.licitacionNo.toLowerCase().includes(q) || c.client.toLowerCase().includes(q) || c.company.toLowerCase().includes(q);
-  }).slice(0, 20);
+  // Lista base assignable (hasta 500) + búsqueda en servidor si escribe ≥2 caracteres
+  const filteredContracts = useMemo(() => {
+    if (form.mode !== "contract") return [];
+    const qDeb = remoteContractQuery;
+    if (qDeb.length >= 2) {
+      if (Array.isArray(contractRemoteSearch?.data)) {
+        return contractRemoteSearch.data.slice(0, 50);
+      }
+      return filterAssignableContractsByQuery(allContracts, contractSearch, 20);
+    }
+    return filterAssignableContractsByQuery(allContracts, contractSearch, 20);
+  }, [form.mode, allContracts, contractSearch, remoteContractQuery, contractRemoteSearch]);
 
   // ── Filtered expenses ──────────────────────────────────────────────────────
-  const expenses = (data?.data ?? []).filter(e => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return e.description.toLowerCase().includes(q)
-      || e.contract?.client?.toLowerCase().includes(q)
-      || e.contract?.licitacionNo?.toLowerCase().includes(q);
-  });
+  const expenses = useMemo(() => {
+    const raw = data?.data ?? [];
+    const bySearch = raw.filter((e) => {
+      if (!search) return true;
+      const q = search.toLowerCase();
+      return (
+        e.description.toLowerCase().includes(q) ||
+        e.contract?.client?.toLowerCase().includes(q) ||
+        e.contract?.licitacionNo?.toLowerCase().includes(q)
+      );
+    });
+    if (filterDistribution === "all") return bySearch;
+    return bySearch.filter((e) => expenseDistributionKind(e) === filterDistribution);
+  }, [data?.data, search, filterDistribution]);
 
   // ── Totals ─────────────────────────────────────────────────────────────────
   const total = expenses.reduce((s, e) => s + e.amount, 0);
@@ -985,6 +1073,20 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                   <SelectItem value="REJECTED">Rechazados</SelectItem>
                 </SelectContent>
               </Select>
+              <Select
+                value={filterDistribution}
+                onValueChange={(v) => setFilterDistribution(v as ExpenseDistributionFilter)}
+              >
+                <SelectTrigger className="w-[13.5rem]">
+                  <SelectValue placeholder="Reparto" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todo tipo de reparto</SelectItem>
+                  <SelectItem value="single_contract">Un solo contrato (un mes)</SelectItem>
+                  <SelectItem value="multi_month">Un contrato — varios meses</SelectItem>
+                  <SelectItem value="deferred">Varios contratos (diferido)</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </CardContent>
         </Card>
@@ -1210,6 +1312,15 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-slate-700">Período</label>
+              <Input
+                type="month"
+                value={editForm.periodMonth}
+                onChange={(e) => setEditForm((f) => ({ ...f, periodMonth: e.target.value }))}
+              />
+              <p className="text-xs text-slate-400">Mes contable al que se imputa este gasto.</p>
             </div>
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-slate-700">Tipo de gasto</label>
@@ -1496,7 +1607,12 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                 {/* Dropdown: show when focused OR when typing and no contract selected yet */}
                 {(contractFocused || (contractSearch && !form.contractId)) && (
                   <div className="border rounded-md max-h-48 overflow-y-auto divide-y shadow-sm">
-                    {filteredContracts.length === 0 ? (
+                    {contractRemoteSearchLoading && remoteContractQuery.length >= 2 && (
+                      <div className="p-2.5 text-xs text-slate-500 border-b bg-slate-50">
+                        Buscando contratos en el servidor…
+                      </div>
+                    )}
+                    {filteredContracts.length === 0 && !(contractRemoteSearchLoading && remoteContractQuery.length >= 2) ? (
                       <div className="p-3 text-sm text-slate-400">Sin resultados para "{contractSearch}"</div>
                     ) : filteredContracts.map(c => (
                       <button
@@ -1640,10 +1756,16 @@ export default function ExpensesPageClient({ initialExpenses }: { initialExpense
                     const rowPickOpen =
                       customDeferredFocusIdx === idx ||
                       (Boolean(row.contractQuery) && !row.contractId);
-                    const rowFiltered = filterAssignableContractsByQuery(
-                      deferredAssignableContracts,
-                      row.contractQuery
-                    );
+                    const rowPickQuery = row.contractQuery.trim();
+                    const useRemoteRow =
+                      rowPickQuery.length >= 2 &&
+                      customDeferredFocusIdx === idx &&
+                      form.mode === "deferred_custom" &&
+                      Array.isArray(deferredRowRemoteSearch?.data) &&
+                      debouncedDeferredRowSearch.trim() === rowPickQuery;
+                    const rowFiltered = useRemoteRow
+                      ? deferredRowRemoteSearch!.data!.slice(0, 50)
+                      : filterAssignableContractsByQuery(deferredAssignableContracts, row.contractQuery);
                     return (
                       <div key={idx} className="rounded-md border border-violet-100/80 bg-white/90 p-2 space-y-1.5">
                         <div className="flex flex-wrap items-end gap-2">

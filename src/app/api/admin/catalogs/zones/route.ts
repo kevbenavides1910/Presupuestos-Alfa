@@ -9,6 +9,8 @@ const createSchema = z.object({
   description: z.string().max(255).nullable().optional(),
   isActive: z.boolean().default(true),
   sortOrder: z.number().int().default(0),
+  disciplinaryAdministrator: z.string().max(200).nullable().optional(),
+  disciplinaryAdministratorEmail: z.string().max(255).nullable().optional(),
 });
 
 export async function GET(_req: NextRequest) {
@@ -26,6 +28,8 @@ export async function GET(_req: NextRequest) {
       description: z.description,
       isActive: z.isActive,
       sortOrder: z.sortOrder,
+      disciplinaryAdministrator: z.disciplinaryAdministrator,
+      disciplinaryAdministratorEmail: z.disciplinaryAdministratorEmail,
       locationsCount: z._count.locations,
     }));
     return ok(data);
@@ -48,12 +52,20 @@ export async function POST(req: NextRequest) {
     const existing = await prisma.zone.findUnique({ where: { name } });
     if (existing) return badRequest("Ya existe una zona con ese nombre");
 
+    const adm = parsed.data.disciplinaryAdministrator?.trim() || null;
+    const admEmail = parsed.data.disciplinaryAdministratorEmail?.trim() || null;
+    if (admEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(admEmail)) {
+      return badRequest("Correo del administrador disciplinario no válido");
+    }
+
     const zone = await prisma.zone.create({
       data: {
         name,
         description: parsed.data.description?.trim() || null,
         isActive: parsed.data.isActive,
         sortOrder: parsed.data.sortOrder,
+        disciplinaryAdministrator: adm,
+        disciplinaryAdministratorEmail: admEmail,
       },
     });
     return created(zone);

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Search, FileSpreadsheet, BarChart3, Upload, AlertTriangle, FileText, Eye, Users,
+  Search, FileSpreadsheet, BarChart3, Upload, AlertTriangle, FileText, Eye, Users, Download, Plus, Trash2,
 } from "lucide-react";
 import { Topbar } from "@/components/layout/Topbar";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,15 @@ import { exportRowsToExcel } from "@/lib/utils/excel-export";
 import { formatDate } from "@/lib/utils/format";
 import { ApercibimientoStatusDialog } from "@/components/disciplinary/StatusDialog";
 import { ContractClientDialog } from "@/components/disciplinary/ContractClientDialog";
+import { ManualApercibimientoDialog } from "@/components/disciplinary/ManualApercibimientoDialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "@/components/ui/toaster";
 import { Pencil } from "lucide-react";
 
@@ -91,6 +100,9 @@ export default function DisciplinarioListPage() {
     clienteSetManual: boolean;
   } | null>(null);
 
+  const [manualDialogOpen, setManualDialogOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; numero: string } | null>(null);
+
   const [filters, setFilters] = useState({
     desde: "",
     hasta: "",
@@ -129,6 +141,23 @@ export default function DisciplinarioListPage() {
   const rows = data?.data ?? [];
   const total = data?.meta?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / limit));
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/disciplinary/apercibimientos/${id}`, { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error?.message ?? "Error al eliminar");
+      return json.data as { numero?: string };
+    },
+    onSuccess: () => {
+      toast.success("Apercibimiento eliminado");
+      setDeleteTarget(null);
+      queryClient.invalidateQueries({ queryKey: ["disciplinary-list"] });
+      queryClient.invalidateQueries({ queryKey: ["disciplinary-resumen"] });
+      queryClient.invalidateQueries({ queryKey: ["disciplinary-detail"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   const quickStatusMutation = useMutation({
     mutationFn: async (vars: { id: string; estado: string }) => {
@@ -224,7 +253,10 @@ export default function DisciplinarioListPage() {
               Apercibimientos
             </h1>
             <p className="text-sm text-slate-500">
-              Historial importado desde la app de escritorio. Solo lectura.
+              Registro central de apercibimientos (importación, escritorio o alta manual).{" "}
+              {canManage
+                ? "Los administradores y supervisores pueden dar de alta o eliminar registros manuales."
+                : "Consulta y seguimiento de estado."}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -243,12 +275,19 @@ export default function DisciplinarioListPage() {
                 <BarChart3 className="h-4 w-4" /> Dashboard
               </Button>
             </Link>
-            {isAdmin && (
-              <Link href="/disciplinario/importar">
-                <Button size="sm" className="gap-2">
-                  <Upload className="h-4 w-4" /> Importar Excel
+            {canManage && (
+              <>
+                <Button size="sm" variant="outline" className="gap-2" onClick={() => setManualDialogOpen(true)}>
+                  <Plus className="h-4 w-4" /> Alta manual
                 </Button>
-              </Link>
+                {isAdmin && (
+                  <Link href="/disciplinario/importar">
+                    <Button size="sm" className="gap-2">
+                      <Upload className="h-4 w-4" /> Importación
+                    </Button>
+                  </Link>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -490,9 +529,18 @@ export default function DisciplinarioListPage() {
                         )}
                       </td>
                       <td className="px-3 py-2 text-center text-xs">
-                        <div className="flex justify-center gap-1">
+                        <div className="flex justify-center gap-1 flex-wrap">
+                          <a
+                            href={`/api/disciplinary/apercibimientos/${r.id}/pdf`}
+                            className="inline-flex text-slate-500 hover:text-blue-600"
+                            title="Descargar PDF de omisión / apercibimiento"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                          </a>
                           {r.pdfDisponible && (
-                            <span title="PDF disponible en archivo interno" className="text-slate-500">
+                            <span title="PDF de archivo interno (app escritorio)" className="text-slate-500">
                               <FileText className="h-3.5 w-3.5" />
                             </span>
                           )}
@@ -506,21 +554,31 @@ export default function DisciplinarioListPage() {
                       <td className="px-3 py-2 text-right">
                         <div className="inline-flex items-center gap-2">
                           {canManage && (
-                            <button
-                              onClick={() =>
-                                setContractDialog({
-                                  id: r.id,
-                                  numero: r.numero,
-                                  contrato: r.contrato,
-                                  cliente: r.cliente,
-                                  clienteSetManual: r.clienteSetManual,
-                                })
-                              }
-                              className="inline-flex items-center text-slate-500 hover:text-blue-600 text-xs gap-1"
-                              title="Editar contrato/cliente"
-                            >
-                              <Pencil className="h-3.5 w-3.5" /> Contrato
-                            </button>
+                            <>
+                              <button
+                                onClick={() =>
+                                  setContractDialog({
+                                    id: r.id,
+                                    numero: r.numero,
+                                    contrato: r.contrato,
+                                    cliente: r.cliente,
+                                    clienteSetManual: r.clienteSetManual,
+                                  })
+                                }
+                                className="inline-flex items-center text-slate-500 hover:text-blue-600 text-xs gap-1"
+                                title="Editar contrato/cliente"
+                              >
+                                <Pencil className="h-3.5 w-3.5" /> Contrato
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setDeleteTarget({ id: r.id, numero: r.numero })}
+                                className="inline-flex items-center text-slate-500 hover:text-rose-600 text-xs gap-1"
+                                title="Eliminar apercibimiento"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" /> Eliminar
+                              </button>
+                            </>
                           )}
                           <Link
                             href={`/disciplinario/empleados/${encodeURIComponent(r.codigoEmpleado)}`}
@@ -551,6 +609,33 @@ export default function DisciplinarioListPage() {
           onOpenChange={(o) => !o && setContractDialog(null)}
           apercibimiento={contractDialog}
         />
+
+        <ManualApercibimientoDialog open={manualDialogOpen} onOpenChange={setManualDialogOpen} />
+
+        <Dialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Eliminar apercibimiento</DialogTitle>
+              <DialogDescription>
+                Se eliminará <strong>{deleteTarget?.numero}</strong> y todas sus omisiones en base de datos.
+                Esta acción no se puede deshacer.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button type="button" variant="outline" onClick={() => setDeleteTarget(null)}>
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={deleteMutation.isPending}
+                onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+              >
+                {deleteMutation.isPending ? "Eliminando…" : "Eliminar"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Paginación */}
         {total > limit && (

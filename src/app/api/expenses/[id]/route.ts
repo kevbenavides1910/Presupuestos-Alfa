@@ -11,6 +11,7 @@ import {
   applyDeferredExpenseDistributionsTx,
   validateManualAllocationsAgainstContracts,
 } from "@/lib/server/deferred-expense-distribution";
+import { assignableContractStatusWhereInput } from "@/lib/server/assignable-contract-where";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -28,6 +29,7 @@ const patchExpenseSchema = z
     company: companyCodeSchema.nullable().optional(),
     registroCxp: z.string().nullable().optional(),
     registroTr: z.string().nullable().optional(),
+    periodMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Periodo inválido (YYYY-MM)").optional(),
     /** Vacío en API = todos los contratos activos en el reparto (solo reparto proporcional). */
     deferredIncludeContractIds: z.array(z.string().min(1)).optional(),
     deferredManualAllocations: z
@@ -46,6 +48,7 @@ const patchExpenseSchema = z
       d.company !== undefined ||
       d.registroCxp !== undefined ||
       d.registroTr !== undefined ||
+      d.periodMonth !== undefined ||
       d.deferredIncludeContractIds !== undefined ||
       d.deferredManualAllocations !== undefined,
     { message: "Indique al menos un campo a actualizar" }
@@ -167,6 +170,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
         company?: string | null;
         registroCxp?: string | null;
         registroTr?: string | null;
+        periodMonth?: Date;
         deferredIncludeContractIds?: string[];
         deferredManualDistribution?: boolean;
         deferredManualAllocations?: Prisma.InputJsonValue;
@@ -180,6 +184,10 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       if (p.company !== undefined) data.company = p.company;
       if (p.registroCxp !== undefined) data.registroCxp = p.registroCxp;
       if (p.registroTr !== undefined) data.registroTr = p.registroTr;
+      if (p.periodMonth !== undefined) {
+        const [yy, mm] = p.periodMonth.split("-").map(Number);
+        data.periodMonth = new Date(yy, mm - 1, 1);
+      }
 
       if (p.deferredManualAllocations !== undefined) {
         if (!existing.isDeferred) return badRequest("Solo aplica a gastos diferidos");
@@ -219,8 +227,8 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
           const okIds = await prisma.contract.findMany({
             where: {
               id: { in: ids },
-              status: { in: ["ACTIVE", "PROLONGATION"] },
               deletedAt: null,
+              ...assignableContractStatusWhereInput(),
             },
             select: { id: true },
           });
@@ -285,8 +293,8 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
         const okIds = await prisma.contract.findMany({
           where: {
             id: { in: ids },
-            status: { in: ["ACTIVE", "PROLONGATION"] },
             deletedAt: null,
+            ...assignableContractStatusWhereInput(),
           },
           select: { id: true },
         });

@@ -140,6 +140,32 @@ export async function PATCH(
   }
 }
 
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const session = await getSession();
+  if (!session) return unauthorized();
+  if (!canManageDisciplinary(session.user.role)) return forbidden();
+
+  try {
+    const { id } = await params;
+    const existing = await prisma.disciplinaryApercibimiento.findUnique({
+      where: { id },
+      select: { id: true, numero: true },
+    });
+    if (!existing) return notFound("Apercibimiento no encontrado");
+
+    await prisma.disciplinaryApercibimiento.delete({ where: { id } });
+    return ok({ deleted: true, numero: existing.numero });
+  } catch (e) {
+    return serverError(
+      e instanceof Error ? e.message : "Error al eliminar apercibimiento",
+      e,
+    );
+  }
+}
+
 async function resolveClientByLicitacion(contratoNorm: string): Promise<string | null> {
   // Las licitaciones se guardan tal cual; comparamos normalizadas en memoria sobre un set acotado.
   const candidates = await prisma.contract.findMany({

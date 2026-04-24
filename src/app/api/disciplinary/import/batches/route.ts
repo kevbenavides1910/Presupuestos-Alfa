@@ -10,8 +10,11 @@ export async function GET() {
 
   const batches = await prisma.disciplinaryImportBatch.findMany({
     orderBy: { createdAt: "desc" },
-    take: 30,
-    include: { uploadedBy: { select: { name: true, email: true } } },
+    take: 50,
+    include: {
+      uploadedBy: { select: { name: true, email: true } },
+      _count: { select: { apercibimientos: true } },
+    },
   });
   return ok(batches);
 }

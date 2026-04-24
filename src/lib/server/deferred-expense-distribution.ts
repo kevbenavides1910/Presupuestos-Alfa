@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
+import { assignableContractStatusWhereInput } from "@/lib/server/assignable-contract-where";
 
 function toNum(v: Decimal | number | string): number {
   return parseFloat(v.toString());
@@ -68,7 +69,7 @@ export function normalizeManualAllocationsToTotalCents(
   return cents.map((r) => ({ contractId: r.contractId, amount: r.cents / 100 }));
 }
 
-/** Solo valida que los IDs existan y estén activos; la empresa del gasto puede distinta de la de los contratos. */
+/** Valida que los IDs existan y sean asignables (misma regla que buscador de contratos en gastos). */
 export async function validateManualAllocationsAgainstContracts(
   db: Pick<PrismaClient, "contract">,
   rows: ManualAllocRow[]
@@ -77,8 +78,8 @@ export async function validateManualAllocationsAgainstContracts(
   const contracts = await db.contract.findMany({
     where: {
       id: { in: ids },
-      status: { in: ["ACTIVE", "PROLONGATION"] },
       deletedAt: null,
+      ...assignableContractStatusWhereInput(),
     },
     select: { id: true },
   });
@@ -170,8 +171,8 @@ async function applyManualDeferredDistributionsTx(
   const contracts = await tx.contract.findMany({
     where: {
       id: { in: contractIds },
-      status: { in: ["ACTIVE", "PROLONGATION"] },
       deletedAt: null,
+      ...assignableContractStatusWhereInput(),
     },
     select: { id: true, licitacionNo: true, client: true, company: true },
   });

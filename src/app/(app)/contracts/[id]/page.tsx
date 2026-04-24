@@ -302,7 +302,6 @@ export default function ContractDetailPage() {
         <Tabs defaultValue="expenses">
           <TabsList className="flex-wrap">
             <TabsTrigger value="expenses">Todos los Gastos</TabsTrigger>
-            <TabsTrigger value="deferred">Diferidos</TabsTrigger>
             <TabsTrigger value="overview">Resumen</TabsTrigger>
             <TabsTrigger value="locations">Ubicaciones</TabsTrigger>
             <TabsTrigger value="assets">Activos</TabsTrigger>
@@ -475,16 +474,6 @@ export default function ContractDetailPage() {
 
           <TabsContent value="assets" className="mt-4">
             <AssetsTab contractId={id} readOnly={!canEditExpenses} />
-          </TabsContent>
-
-          <TabsContent value="deferred" className="mt-4">
-            <ContractExpensesTab
-              contractId={id}
-              lockedType="DEFERRED"
-              lockedTypeLabel="Diferidos"
-              isDeferred
-              canManageExpenses={canEditExpenses}
-            />
           </TabsContent>
 
           <TabsContent value="billing" className="mt-4">

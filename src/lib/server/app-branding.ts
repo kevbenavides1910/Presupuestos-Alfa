@@ -43,6 +43,12 @@ export function relativeLogoPath(mime: string): string {
   return `branding/logo.${ext}`;
 }
 
+/** Ruta almacenada para la firma fija del PDF disciplinario (mismo directorio que el logo). */
+export function relativeDisciplinarySignaturePath(mime: string): string {
+  const ext = extensionForMime(mime);
+  return `branding/disciplinary-signature.${ext}`;
+}
+
 export async function ensureBrandingRow() {
   return prisma.appBranding.upsert({
     where: { id: "default" },

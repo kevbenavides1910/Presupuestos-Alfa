@@ -1,7 +1,7 @@
 import type { Session } from "next-auth";
 import type { ContractStatus, UserRole } from "@prisma/client";
-import { monthsAgoServer } from "@/lib/utils/time";
 import { isAdmin } from "@/lib/permissions";
+import { assignableContractStatusWhereInput } from "@/lib/server/assignable-contract-where";
 
 /** Misma lógica de filtro que GET /api/contracts (búsqueda, empresa, estado, assignable, etc.). */
 export function buildContractListWhere(
@@ -11,8 +11,9 @@ export function buildContractListWhere(
   const companyValues = searchParams.getAll("company");
   const status = searchParams.get("status") as ContractStatus | null;
   const clientType = searchParams.get("clientType");
-  const search = searchParams.get("search");
   const assignable = searchParams.get("assignable") === "true";
+  const searchRaw = searchParams.get("search")?.trim();
+  const search = searchRaw && searchRaw.length > 0 ? searchRaw : null;
 
   const where: Record<string, unknown> = { deletedAt: null };
 
@@ -27,22 +28,29 @@ export function buildContractListWhere(
     where.company = { in: companyValues };
   }
 
-  if (assignable) {
-    const cutoff = monthsAgoServer(6);
-    where.OR = [
-      { status: { in: ["ACTIVE", "PROLONGATION", "SUSPENDED"] } },
-      { status: "FINISHED", endDate: { gte: cutoff } },
-    ];
+  const assignableClause = assignable ? assignableContractStatusWhereInput() : null;
+
+  /** Coincide con listado y selector de gastos (incl. código de empresa). */
+  const searchClause = search
+    ? {
+        OR: [
+          { licitacionNo: { contains: search, mode: "insensitive" } },
+          { client: { contains: search, mode: "insensitive" } },
+          { company: { contains: search, mode: "insensitive" } },
+        ],
+      }
+    : null;
+
+  if (assignableClause && searchClause) {
+    where.AND = [assignableClause, searchClause];
+  } else if (assignableClause) {
+    Object.assign(where, assignableClause);
+  } else if (searchClause) {
+    Object.assign(where, searchClause);
   }
 
   if (status) where.status = status;
   if (clientType) where.clientType = clientType;
-  if (search) {
-    where.OR = [
-      { licitacionNo: { contains: search, mode: "insensitive" } },
-      { client: { contains: search, mode: "insensitive" } },
-    ];
-  }
 
   return where;
 }

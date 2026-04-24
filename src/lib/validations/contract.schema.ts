@@ -27,7 +27,9 @@ function distributionSumsTo100(data: {
   adminPct: number;
   profitPct: number;
 }) {
-  return Math.abs(data.laborPct + data.suppliesPct + data.adminPct + data.profitPct - 1) < 0.0001;
+  // Permitimos pequeno margen para redondeos humanos/UI (ej. 83.44 + 5.50 + 1.06 + 10.00)
+  // y precision de parseo decimal; evita bloquear contratos que efectivamente suman 100%.
+  return Math.abs(data.laborPct + data.suppliesPct + data.adminPct + data.profitPct - 1) < 0.001;
 }
 
 export const contractCreateSchema = contractInputSchema

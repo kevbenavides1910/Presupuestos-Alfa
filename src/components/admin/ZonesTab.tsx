@@ -16,6 +16,8 @@ interface ZoneRow {
   description: string | null;
   isActive: boolean;
   sortOrder: number;
+  disciplinaryAdministrator: string | null;
+  disciplinaryAdministratorEmail: string | null;
   locationsCount: number;
 }
 
@@ -29,7 +31,14 @@ export function ZonesTab({ readOnly }: { readOnly?: boolean }) {
 
   const [showAdd, setShowAdd] = useState(false);
   const [editItem, setEditItem] = useState<ZoneRow | null>(null);
-  const [form, setForm] = useState({ name: "", description: "", isActive: true, sortOrder: 0 });
+  const [form, setForm] = useState({
+    name: "",
+    description: "",
+    isActive: true,
+    sortOrder: 0,
+    disciplinaryAdministrator: "",
+    disciplinaryAdministratorEmail: "",
+  });
 
   function openAdd() {
     const rows = data?.data ?? [];
@@ -38,6 +47,8 @@ export function ZonesTab({ readOnly }: { readOnly?: boolean }) {
       description: "",
       isActive: true,
       sortOrder: rows.length ? Math.max(...rows.map((r) => r.sortOrder)) + 1 : 1,
+      disciplinaryAdministrator: "",
+      disciplinaryAdministratorEmail: "",
     });
     setEditItem(null);
     setShowAdd(true);
@@ -49,18 +60,34 @@ export function ZonesTab({ readOnly }: { readOnly?: boolean }) {
       description: item.description ?? "",
       isActive: item.isActive,
       sortOrder: item.sortOrder,
+      disciplinaryAdministrator: item.disciplinaryAdministrator ?? "",
+      disciplinaryAdministratorEmail: item.disciplinaryAdministratorEmail ?? "",
     });
     setEditItem(item);
     setShowAdd(true);
   }
 
   const saveMutation = useMutation({
-    mutationFn: async (payload: { id?: string; name: string; description: string; isActive: boolean; sortOrder: number }) => {
+    mutationFn: async (payload: {
+      id?: string;
+      name: string;
+      description: string;
+      isActive: boolean;
+      sortOrder: number;
+      disciplinaryAdministrator: string;
+      disciplinaryAdministratorEmail: string;
+    }) => {
       const body = {
         name: payload.name,
         description: payload.description.trim() ? payload.description.trim() : null,
         isActive: payload.isActive,
         sortOrder: payload.sortOrder,
+        disciplinaryAdministrator: payload.disciplinaryAdministrator.trim()
+          ? payload.disciplinaryAdministrator.trim()
+          : null,
+        disciplinaryAdministratorEmail: payload.disciplinaryAdministratorEmail.trim()
+          ? payload.disciplinaryAdministratorEmail.trim()
+          : null,
       };
       const url = payload.id ? `/api/admin/catalogs/zones/${payload.id}` : "/api/admin/catalogs/zones";
       const method = payload.id ? "PATCH" : "POST";
@@ -113,7 +140,9 @@ export function ZonesTab({ readOnly }: { readOnly?: boolean }) {
         <p className="text-sm text-slate-500 max-w-2xl">
           Cree zonas geográficas u operativas (ej. <em>GAM</em>, <em>Pacífico</em>, <em>Caribe</em>) para agrupar
           ubicaciones de los contratos. Use la pestaña <strong className="text-slate-700">Ubicaciones</strong> para
-          asignar la zona a cada ubicación.
+          asignar la zona a cada ubicación. El <strong>administrador disciplinario</strong> y su correo se usan al
+          importar apercibimientos cuando la columna «Zona» coincide con el <strong>nombre</strong> de la zona (y en
+          copia de correo al enviar marcas por SMTP).
         </p>
         <div className="flex items-center gap-2 shrink-0">
           <Button
@@ -125,6 +154,8 @@ export function ZonesTab({ readOnly }: { readOnly?: boolean }) {
               const exportRows = rows.map((z) => ({
                 Nombre: z.name,
                 Descripción: z.description ?? "",
+                "Administrador disciplinario": z.disciplinaryAdministrator ?? "",
+                "Correo administrador": z.disciplinaryAdministratorEmail ?? "",
                 Ubicaciones: z.locationsCount,
                 Estado: z.isActive ? "Activa" : "Inactiva",
                 Orden: z.sortOrder,
@@ -133,7 +164,7 @@ export function ZonesTab({ readOnly }: { readOnly?: boolean }) {
                 filename: "zonas",
                 sheetName: "Zonas",
                 rows: exportRows,
-                columnWidths: [24, 36, 14, 12, 10],
+                columnWidths: [24, 28, 26, 28, 14, 12, 10],
               });
             }}
           >
@@ -161,6 +192,8 @@ export function ZonesTab({ readOnly }: { readOnly?: boolean }) {
               <tr className="bg-slate-50 border-b">
                 <th className="text-left px-4 py-3 font-semibold text-slate-600">Nombre</th>
                 <th className="text-left px-4 py-3 font-semibold text-slate-600">Descripción</th>
+                <th className="text-left px-4 py-3 font-semibold text-slate-600 min-w-[9rem]">Adm. disciplinario</th>
+                <th className="text-left px-4 py-3 font-semibold text-slate-600 min-w-[9rem]">Correo adm.</th>
                 <th className="text-center px-4 py-3 font-semibold text-slate-600 w-32">Ubicaciones</th>
                 <th className="text-center px-4 py-3 font-semibold text-slate-600 w-24">Estado</th>
                 <th className="text-center px-4 py-3 font-semibold text-slate-600 w-20">Orden</th>
@@ -172,6 +205,10 @@ export function ZonesTab({ readOnly }: { readOnly?: boolean }) {
                 <tr key={z.id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-4 py-3 font-medium text-slate-800">{z.name}</td>
                   <td className="px-4 py-3 text-slate-600 text-xs">{z.description ?? "—"}</td>
+                  <td className="px-4 py-3 text-slate-700 text-xs">{z.disciplinaryAdministrator ?? "—"}</td>
+                  <td className="px-4 py-3 text-slate-600 text-xs break-all max-w-[12rem]">
+                    {z.disciplinaryAdministratorEmail ?? "—"}
+                  </td>
                   <td className="px-4 py-3 text-center">
                     <span className="inline-flex items-center justify-center min-w-[2rem] h-6 px-2 rounded-full bg-slate-100 text-slate-700 text-xs font-medium">
                       {z.locationsCount}
@@ -229,6 +266,23 @@ export function ZonesTab({ readOnly }: { readOnly?: boolean }) {
                 placeholder="Opcional"
                 value={form.description}
                 onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-slate-700">Administrador disciplinario</label>
+              <Input
+                placeholder="Nombre del administrador de zona (disciplinario)"
+                value={form.disciplinaryAdministrator}
+                onChange={(e) => setForm((f) => ({ ...f, disciplinaryAdministrator: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-slate-700">Correo del administrador</label>
+              <Input
+                type="email"
+                placeholder="correo@empresa.com (CC en envío de marcas)"
+                value={form.disciplinaryAdministratorEmail}
+                onChange={(e) => setForm((f) => ({ ...f, disciplinaryAdministratorEmail: e.target.value }))}
               />
             </div>
             <div className="grid grid-cols-2 gap-3">

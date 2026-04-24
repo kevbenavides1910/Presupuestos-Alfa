@@ -9,6 +9,8 @@ const updateSchema = z.object({
   description: z.string().max(255).nullable().optional(),
   isActive: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
+  disciplinaryAdministrator: z.string().max(200).nullable().optional(),
+  disciplinaryAdministratorEmail: z.string().max(255).nullable().optional(),
 });
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -25,7 +27,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const parsed = updateSchema.safeParse(body);
     if (!parsed.success) return badRequest("Datos inválidos", parsed.error.flatten());
 
-    const data: { name?: string; description?: string | null; isActive?: boolean; sortOrder?: number } = {};
+    const data: {
+      name?: string;
+      description?: string | null;
+      isActive?: boolean;
+      sortOrder?: number;
+      disciplinaryAdministrator?: string | null;
+      disciplinaryAdministratorEmail?: string | null;
+    } = {};
     if (parsed.data.name !== undefined) {
       const name = parsed.data.name.trim();
       if (name !== existing.name) {
@@ -39,6 +48,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
     if (parsed.data.isActive !== undefined) data.isActive = parsed.data.isActive;
     if (parsed.data.sortOrder !== undefined) data.sortOrder = parsed.data.sortOrder;
+    if (parsed.data.disciplinaryAdministrator !== undefined) {
+      data.disciplinaryAdministrator = parsed.data.disciplinaryAdministrator?.trim() || null;
+    }
+    if (parsed.data.disciplinaryAdministratorEmail !== undefined) {
+      const em = parsed.data.disciplinaryAdministratorEmail?.trim() || null;
+      if (em && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+        return badRequest("Correo del administrador disciplinario no válido");
+      }
+      data.disciplinaryAdministratorEmail = em;
+    }
 
     const updated = await prisma.zone.update({ where: { id }, data });
     return ok(updated);

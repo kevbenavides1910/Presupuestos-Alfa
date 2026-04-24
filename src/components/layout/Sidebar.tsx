@@ -4,20 +4,35 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQuery } from "@tanstack/react-query";
+import type { LucideIcon } from "lucide-react";
 import {
   LayoutDashboard, FileText, BarChart3, TrendingUp, DollarSign, Users, Shield, BookOpen, ClipboardCheck, Package, AlertTriangle, History,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { APP_BRANDING_QUERY_KEY, DEFAULT_PRIMARY_HEX, DEFAULT_SIDEBAR_HEX } from "@/lib/branding-constants";
 
-const navItems = [
+type NavItem = {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  adminOnly?: boolean;
+  /** Resaltado del ítem; por defecto: coincide ruta o prefijo (excepto /dashboard). */
+  isActive?: (pathname: string, href: string) => boolean;
+};
+
+const navItems: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/contracts", label: "Contratos", icon: FileText },
   { href: "/expenses", label: "Gastos", icon: DollarSign },
   { href: "/expenses/pending-approvals", label: "Aprobaciones", icon: ClipboardCheck },
   { href: "/expenses/approval-bitacora", label: "Bitácora aprobaciones", icon: History },
   { href: "/inventory", label: "Inventario", icon: Package },
-  { href: "/disciplinario", label: "Disciplinario", icon: AlertTriangle },
+  {
+    href: "/disciplinario/importar",
+    label: "Disciplinario",
+    icon: AlertTriangle,
+    isActive: (p) => p.startsWith("/disciplinario"),
+  },
   { href: "/reports/annual", label: "Reporte Anual", icon: TrendingUp },
   { href: "/reports", label: "Reporte mensual", icon: BarChart3 },
   { href: "/admin/users", label: "Usuarios", icon: Users },
@@ -73,12 +88,16 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 px-4 py-4 space-y-1">
-        {navItems.map((item) => {
-          const active = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href!));
+        {navItems
+          .filter((item) => !item.adminOnly || role === "ADMIN")
+          .map((item) => {
+          const active = item.isActive
+            ? item.isActive(pathname, item.href)
+            : pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href));
           return (
             <Link
               key={item.href}
-              href={item.href!}
+              href={item.href}
               className={cn(
                 "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
                 active

@@ -11,3 +11,5 @@ tsconfig.tsbuildinfo
 prisma/*.db
 prisma/dev.db
 uploads/
+__pycache__/
+*.py[cod]

@@ -11,6 +11,7 @@ import {
   applyDeferredExpenseDistributions,
   validateManualAllocationsAgainstContracts,
 } from "@/lib/server/deferred-expense-distribution";
+import { assignableContractStatusWhereInput } from "@/lib/server/assignable-contract-where";
 
 function prismaErrorHint(err: unknown): string | null {
   const msg = err instanceof Error ? err.message : String(err);
@@ -188,8 +189,8 @@ export async function POST(req: NextRequest) {
       const okIds = await prisma.contract.findMany({
         where: {
           id: { in: deferredIncludeContractIds },
-          status: { in: ["ACTIVE", "PROLONGATION"] },
           deletedAt: null,
+          ...assignableContractStatusWhereInput(),
         },
         select: { id: true },
       });
