@@ -384,14 +384,13 @@ export function ContractForm({ defaultValues, mode = "create" }: Props) {
                 inputMode="decimal"
                 autoComplete="off"
                 {...register("monthlyBilling", {
-                  // Usar `NaN` literal y cuerpo en bloque: en producción, `return Number.NaN`
-                  // en una sola línea llegó a minificarse mal (`returnNaN` inexistente) y tumbar Node.
+                  // `return NaN` puede minificarse mal en prod (`returnNaN`). Usar `Number.NaN`.
                   setValueAs: (v) => {
                     if (v === "" || v === null || v === undefined) {
-                      return NaN;
+                      return Number.NaN;
                     }
                     const n = parseNumber(v);
-                    return n === null ? NaN : n;
+                    return n === null ? Number.NaN : n;
                   },
                 })}
                 placeholder="Ej: 6 835 131,34"
@@ -450,10 +449,10 @@ export function ContractForm({ defaultValues, mode = "create" }: Props) {
                         {...register(item.field, {
                           setValueAs: (v) => {
                             if (v === "" || v === null || v === undefined) {
-                              return NaN;
+                              return Number.NaN;
                             }
                             const n = parsePercent(v);
-                            return n === null ? NaN : n;
+                            return n === null ? Number.NaN : n;
                           },
                         })}
                         placeholder="0,93"
