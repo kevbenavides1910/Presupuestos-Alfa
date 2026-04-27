@@ -6,7 +6,11 @@ RUN apk add --no-cache libc6-compat openssl
 
 FROM base AS deps
 COPY package.json package-lock.json* ./
-RUN npm ci
+# Redes lentas o inestables (p. ej. VPS): más reintentos antes de fallar el build.
+RUN npm config set fetch-retries 15 \
+  && npm config set fetch-retry-mintimeout 20000 \
+  && npm config set fetch-retry-maxtimeout 300000 \
+  && npm ci
 
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
