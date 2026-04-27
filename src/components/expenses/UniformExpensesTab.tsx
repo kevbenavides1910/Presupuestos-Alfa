@@ -13,6 +13,7 @@ import { toast } from "@/components/ui/toaster";
 import { uniformExpenseSchema, type UniformExpenseInput } from "@/lib/validations/expense.schema";
 import { formatCurrency, formatMonthYear, toMonthString, getFirstDayOfMonth } from "@/lib/utils/format";
 import { UNIFORM_ITEMS } from "@/lib/utils/constants";
+import { rhfValueAsNumber } from "@/lib/rhf-safe-number";
 import { format, subMonths, addMonths } from "date-fns";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
@@ -150,7 +151,7 @@ export function UniformExpensesTab({ contractId, suppliesBudget }: Props) {
                             type="number"
                             min="0"
                             className="text-right h-8"
-                            {...register(item.qtyKey as keyof UniformExpenseInput, { valueAsNumber: true })}
+                            {...register(item.qtyKey as keyof UniformExpenseInput, { setValueAs: rhfValueAsNumber })}
                           />
                         </td>
                         <td className="py-2 px-2">
@@ -158,7 +159,7 @@ export function UniformExpensesTab({ contractId, suppliesBudget }: Props) {
                             type="number"
                             min="0"
                             className="text-right h-8"
-                            {...register(item.costKey as keyof UniformExpenseInput, { valueAsNumber: true })}
+                            {...register(item.costKey as keyof UniformExpenseInput, { setValueAs: rhfValueAsNumber })}
                           />
                         </td>
                         <td className="py-2 pl-2 text-right font-medium">

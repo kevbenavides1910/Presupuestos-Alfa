@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { toast } from "@/components/ui/toaster";
 import { periodSchema, type PeriodInput } from "@/lib/validations/contract.schema";
 import { formatCurrency, formatDate } from "@/lib/utils/format";
+import { rhfValueAsNumber } from "@/lib/rhf-safe-number";
 import { Loader2 } from "lucide-react";
 
 interface Period {
@@ -150,7 +151,7 @@ export function PeriodsTab({ contractId, periods, readOnly }: Props) {
             </div>
             <div className="space-y-1.5">
               <Label>Facturación Mensual (₡)</Label>
-              <Input type="number" min="0" {...register("monthlyBilling", { valueAsNumber: true })} />
+              <Input type="number" min="0" {...register("monthlyBilling", { setValueAs: rhfValueAsNumber })} />
               {errors.monthlyBilling && <p className="text-xs text-red-600">{errors.monthlyBilling.message}</p>}
             </div>
             <div className="space-y-1.5">

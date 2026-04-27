@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { rhfValueAsNumber } from "@/lib/rhf-safe-number";
 import { toast } from "@/components/ui/toaster";
 import { adminExpenseSchema, type AdminExpenseInput } from "@/lib/validations/expense.schema";
 import { formatCurrency, formatMonthYear, toMonthString } from "@/lib/utils/format";
@@ -199,7 +200,7 @@ export default function AdminExpensesPage() {
             {ADMIN_FIELDS.map((f) => (
               <div key={f.key} className="space-y-1.5">
                 <Label>{f.label} (₡)</Label>
-                <Input type="number" min="0" {...register(f.key, { valueAsNumber: true })} />
+                <Input type="number" min="0" {...register(f.key, { setValueAs: rhfValueAsNumber })} />
               </div>
             ))}
 

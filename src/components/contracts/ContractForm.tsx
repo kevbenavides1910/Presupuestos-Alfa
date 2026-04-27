@@ -20,6 +20,7 @@ import { useCompanies } from "@/lib/hooks/use-companies";
 import { canModifyContracts } from "@/lib/permissions";
 import { format } from "date-fns";
 import { parseNumber, parsePercent } from "@/lib/import/xlsx-read";
+import { RHF_EMPTY_NUMBER, rhfValueAsNumber } from "@/lib/rhf-safe-number";
 
 interface PositionDraft {
   name: string;
@@ -279,7 +280,7 @@ export function ContractForm({ defaultValues, mode = "create" }: Props) {
                 id="officersCount"
                 type="number"
                 min="1"
-                {...register("officersCount", { valueAsNumber: true })}
+                {...register("officersCount", { setValueAs: rhfValueAsNumber })}
               />
               {errors.officersCount && <p className="text-xs text-red-600">{errors.officersCount.message}</p>}
             </div>
@@ -289,7 +290,7 @@ export function ContractForm({ defaultValues, mode = "create" }: Props) {
                 id="positionsCount"
                 type="number"
                 min="1"
-                {...register("positionsCount", { valueAsNumber: true })}
+                {...register("positionsCount", { setValueAs: rhfValueAsNumber })}
               />
               {errors.positionsCount && <p className="text-xs text-red-600">{errors.positionsCount.message}</p>}
             </div>
@@ -384,13 +385,12 @@ export function ContractForm({ defaultValues, mode = "create" }: Props) {
                 inputMode="decimal"
                 autoComplete="off"
                 {...register("monthlyBilling", {
-                  // `return NaN` puede minificarse mal en prod (`returnNaN`). Usar `Number.NaN`.
                   setValueAs: (v) => {
                     if (v === "" || v === null || v === undefined) {
-                      return Number.NaN;
+                      return RHF_EMPTY_NUMBER;
                     }
                     const n = parseNumber(v);
-                    return n === null ? Number.NaN : n;
+                    return n === null ? RHF_EMPTY_NUMBER : n;
                   },
                 })}
                 placeholder="Ej: 6 835 131,34"
@@ -449,10 +449,10 @@ export function ContractForm({ defaultValues, mode = "create" }: Props) {
                         {...register(item.field, {
                           setValueAs: (v) => {
                             if (v === "" || v === null || v === undefined) {
-                              return Number.NaN;
+                              return RHF_EMPTY_NUMBER;
                             }
                             const n = parsePercent(v);
-                            return n === null ? Number.NaN : n;
+                            return n === null ? RHF_EMPTY_NUMBER : n;
                           },
                         })}
                         placeholder="0,93"

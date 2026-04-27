@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { rhfValueAsNumber } from "@/lib/rhf-safe-number";
 import { toast } from "@/components/ui/toaster";
 import { deferredExpenseSchema, type DeferredExpenseInput } from "@/lib/validations/expense.schema";
 import { formatCurrency, formatDate, formatMonthYear, fromMonthString, toMonthString } from "@/lib/utils/format";
@@ -235,7 +236,7 @@ export default function DeferredExpensesPage() {
             </div>
             <div className="space-y-1.5">
               <Label>Monto Total (₡) *</Label>
-              <Input type="number" min="0" {...register("totalAmount", { valueAsNumber: true })} />
+              <Input type="number" min="0" {...register("totalAmount", { setValueAs: rhfValueAsNumber })} />
               {errors.totalAmount && <p className="text-xs text-red-600">{errors.totalAmount.message}</p>}
             </div>
             <DialogFooter>

@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "@/components/ui/toaster";
+import { rhfValueAsNumber } from "@/lib/rhf-safe-number";
 import { auditFindingSchema, type AuditFindingInput } from "@/lib/validations/expense.schema";
 import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { AUDIT_ITEMS } from "@/lib/utils/constants";
@@ -228,11 +229,11 @@ export function AuditFindingsTab({ contractId }: { contractId: string }) {
                       <td className="px-3 py-2">{item.label}</td>
                       <td className="px-3 py-2">
                         <Input type="number" min="0" className="h-7 text-right"
-                          {...register(item.qtyKey as keyof AuditFindingInput, { valueAsNumber: true })} />
+                          {...register(item.qtyKey as keyof AuditFindingInput, { setValueAs: rhfValueAsNumber })} />
                       </td>
                       <td className="px-3 py-2">
                         <Input type="number" min="0" className="h-7 text-right"
-                          {...register(item.costKey as keyof AuditFindingInput, { valueAsNumber: true })} />
+                          {...register(item.costKey as keyof AuditFindingInput, { setValueAs: rhfValueAsNumber })} />
                       </td>
                       <td className="px-3 py-2 text-right text-slate-500">
                         {qty * cost > 0 ? formatCurrency(qty * cost) : "—"}
